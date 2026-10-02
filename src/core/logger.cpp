@@ -1,7 +1,10 @@
 #include "core/logger.h"
 
 #include <chrono>
+#include <cstdlib>
 #include <ctime>
+#include <filesystem>
+#include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <mutex>
@@ -30,7 +33,20 @@ std::string TimestampNow() {
 
 void LogLine(const char* level, const std::string& message) {
     std::lock_guard<std::mutex> lock(g_logMutex);
-    std::cout << TimestampNow() << " [" << level << "] " << message << std::endl;
+    const std::string line = TimestampNow() + " [" + level + "] " + message;
+    std::cout << line << std::endl;
+#ifdef _WIN32
+    if (const char* localAppData = std::getenv("LOCALAPPDATA"); localAppData && *localAppData) {
+        try {
+            const auto logDir = std::filesystem::path(localAppData) / "Hi5Central" / "Viewer";
+            std::filesystem::create_directories(logDir);
+            std::ofstream out(logDir / "viewer.log", std::ios::app);
+            if (out) out << line << '\n';
+        } catch (...) {
+            // Logging must never affect Viewer startup.
+        }
+    }
+#endif
 }
 }
 

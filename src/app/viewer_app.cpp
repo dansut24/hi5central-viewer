@@ -22,6 +22,7 @@
 #ifdef _WIN32
 #include <windows.h>
 #include <objbase.h>
+#include <shellapi.h>
 #endif
 
 namespace hi5 {
@@ -47,6 +48,37 @@ namespace hi5 {
             return out;
         }
 
+
+#ifdef _WIN32
+        std::string WideToUtf8(const wchar_t* value) {
+            if (!value) return {};
+            const int needed = WideCharToMultiByte(CP_UTF8, 0, value, -1, nullptr, 0, nullptr, nullptr);
+            if (needed <= 1) return {};
+            std::string out(static_cast<std::size_t>(needed), '\0');
+            WideCharToMultiByte(CP_UTF8, 0, value, -1, out.data(), needed, nullptr, nullptr);
+            out.resize(static_cast<std::size_t>(needed - 1));
+            return out;
+        }
+
+        std::string DeepLinkFromWindowsCommandLine() {
+            int argcWide = 0;
+            LPWSTR* argvWide = CommandLineToArgvW(GetCommandLineW(), &argcWide);
+            if (!argvWide) return {};
+
+            std::string candidate;
+            for (int i = 1; i < argcWide; ++i) {
+                const std::string arg = WideToUtf8(argvWide[i]);
+                if (arg.rfind("hi5central-viewer://", 0) == 0 ||
+                    arg.rfind("hi5viewer://", 0) == 0 ||
+                    arg.rfind("hi5tech://", 0) == 0) {
+                    candidate = arg;
+                    break;
+                }
+            }
+            LocalFree(argvWide);
+            return candidate;
+        }
+#endif
 
         std::string GetLocalComputerLabel() {
 #ifdef _WIN32
@@ -1302,9 +1334,24 @@ textarea:focus{border-color:#93b9ff;box-shadow:0 0 0 3px rgba(37,99,235,.09)}
         LogInfo("argc=" + std::to_string(argc));
 
         DeepLinkLaunch launch{};
-        if (argc >= 2 && argv[1]) {
+        std::string launchSource;
+        if (argc >= 2 && argv && argv[1]) {
             launch = ParseDeepLink(argv[1]);
-            LogInfo("Deep link provided via argv");
+            launchSource = "argv";
+        }
+
+#ifdef _WIN32
+        if (!launch.valid) {
+            const std::string rawCommandLineLink = DeepLinkFromWindowsCommandLine();
+            if (!rawCommandLineLink.empty()) {
+                launch = ParseDeepLink(rawCommandLineLink);
+                launchSource = "GetCommandLineW";
+            }
+        }
+#endif
+
+        if (launch.valid) {
+            LogInfo("Deep link provided via " + launchSource);
             LogInfo("Deep link parsed successfully");
             LogInfo("Deep link session_id=" + launch.sessionId);
             LogInfo("Deep link device_id=" + launch.deviceId);
@@ -1312,7 +1359,10 @@ textarea:focus{border-color:#93b9ff;box-shadow:0 0 0 3px rgba(37,99,235,.09)}
             LogInfo("Deep link session_type=" + launch.sessionType);
         }
         else {
-            LogWarn("No deep link provided");
+            LogWarn("No valid deep link provided; argc=" + std::to_string(argc));
+#ifdef _WIN32
+            LogWarn("Raw Windows command line did not contain a valid Hi5Central Viewer URL.");
+#endif
         }
 
         std::filesystem::path exeDir;
