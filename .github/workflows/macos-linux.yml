@@ -37,19 +37,51 @@ jobs:
           test -f build/web/file_browser.html
           ldd build/Hi5CentralViewer
 
-      - name: Package Linux test build
+      - name: Package Linux DEB
         run: |
-          mkdir -p dist/linux/web
-          cp build/Hi5CentralViewer dist/linux/
-          cp web/index.html web/renderer.js web/file_browser.html dist/linux/web/
-          cp installer/linux/install.sh installer/linux/uninstall.sh dist/linux/
-          chmod +x dist/linux/Hi5CentralViewer dist/linux/install.sh dist/linux/uninstall.sh
-          tar -C dist/linux -czf dist/Hi5CentralViewer-linux-x64.tar.gz .
+          PKG=dist/deb
+          mkdir -p "$PKG/DEBIAN" "$PKG/usr/lib/hi5central-viewer/web" "$PKG/usr/share/applications"
+          cp build/Hi5CentralViewer "$PKG/usr/lib/hi5central-viewer/Hi5CentralViewer"
+          cp web/index.html web/renderer.js web/file_browser.html "$PKG/usr/lib/hi5central-viewer/web/"
+          chmod 755 "$PKG/usr/lib/hi5central-viewer/Hi5CentralViewer"
+          cat > "$PKG/usr/share/applications/hi5central-viewer.desktop" <<'EOF'
+          [Desktop Entry]
+          Type=Application
+          Name=Hi5Central Viewer
+          Comment=Hi5Central remote support viewer
+          Exec=/usr/lib/hi5central-viewer/Hi5CentralViewer %u
+          Terminal=false
+          Categories=Network;RemoteAccess;
+          MimeType=x-scheme-handler/hi5central-viewer;x-scheme-handler/hi5viewer;x-scheme-handler/hi5tech;
+          EOF
+          cat > "$PKG/DEBIAN/control" <<EOF
+          Package: hi5central-viewer
+          Version: 0.2.${GITHUB_RUN_NUMBER}
+          Section: net
+          Priority: optional
+          Architecture: amd64
+          Depends: libgtk-3-0, libwebkit2gtk-4.1-0
+          Maintainer: Hi5Central
+          Description: Hi5Central native remote desktop Viewer
+           Native desktop Viewer for Hi5Central RMM remote support sessions.
+          EOF
+          cat > "$PKG/DEBIAN/postinst" <<'EOF'
+          #!/bin/sh
+          set -e
+          if command -v update-desktop-database >/dev/null 2>&1; then
+            update-desktop-database /usr/share/applications >/dev/null 2>&1 || true
+          fi
+          exit 0
+          EOF
+          chmod 755 "$PKG/DEBIAN/postinst"
+          dpkg-deb --build --root-owner-group "$PKG" dist/hi5central-viewer_amd64.deb
+          dpkg-deb --info dist/hi5central-viewer_amd64.deb
+          dpkg-deb --contents dist/hi5central-viewer_amd64.deb
 
       - uses: actions/upload-artifact@v4
         with:
           name: Hi5Central-Viewer-Linux-x64
-          path: dist/Hi5CentralViewer-linux-x64.tar.gz
+          path: dist/hi5central-viewer_amd64.deb
           retention-days: 14
           if-no-files-found: error
 
@@ -85,16 +117,20 @@ jobs:
       - name: Ad-hoc sign test bundle
         run: codesign --force --deep --sign - build/Hi5CentralViewer.app
 
-      - name: Package macOS test build
+      - name: Package macOS DMG
         run: |
           mkdir -p dist
-          ditto -c -k --sequesterRsrc --keepParent \
-            build/Hi5CentralViewer.app \
-            dist/Hi5CentralViewer-macOS-universal-test.zip
+          hdiutil create \
+            -volname "Hi5Central Viewer" \
+            -srcfolder build/Hi5CentralViewer.app \
+            -ov \
+            -format UDZO \
+            dist/Hi5CentralViewer-macOS.dmg
+          hdiutil imageinfo dist/Hi5CentralViewer-macOS.dmg >/dev/null
 
       - uses: actions/upload-artifact@v4
         with:
           name: Hi5Central-Viewer-macOS
-          path: dist/Hi5CentralViewer-macOS-universal-test.zip
+          path: dist/Hi5CentralViewer-macOS.dmg
           retention-days: 14
           if-no-files-found: error
