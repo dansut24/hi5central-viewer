@@ -37,13 +37,18 @@ target_link_libraries(hi5tech-viewer PRIVATE
 )
 
 if (WIN32)
+    # Build as a GUI subsystem application so Windows does not create a console
+    # window, but retain main(argc, argv) so URL protocol activation preserves
+    # the exact deep-link argument semantics used by the proven viewer builds.
     set_target_properties(hi5tech-viewer PROPERTIES WIN32_EXECUTABLE TRUE)
+    if (MSVC)
+        target_link_options(hi5tech-viewer PRIVATE "/ENTRY:mainCRTStartup")
+    endif()
     target_compile_definitions(hi5tech-viewer PRIVATE
         WIN32_LEAN_AND_MEAN
         NOMINMAX
         _CRT_SECURE_NO_WARNINGS
     )
-    target_link_libraries(hi5tech-viewer PRIVATE shell32)
 endif()
 
 add_custom_command(TARGET hi5tech-viewer POST_BUILD
