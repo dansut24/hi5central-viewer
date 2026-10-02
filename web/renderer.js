@@ -1779,6 +1779,19 @@ async function pollStatsOnce() {
     }
   });
 
+  const localCandidate = selectedPair?.localCandidateId
+    ? stats.get(selectedPair.localCandidateId)
+    : null;
+  const remoteCandidate = selectedPair?.remoteCandidateId
+    ? stats.get(selectedPair.remoteCandidateId)
+    : null;
+  const localCandidateType = String(localCandidate?.candidateType || "unknown").toLowerCase();
+  const remoteCandidateType = String(remoteCandidate?.candidateType || "unknown").toLowerCase();
+  const localProtocol = String(localCandidate?.protocol || "").toLowerCase();
+  const remoteProtocol = String(remoteCandidate?.protocol || "").toLowerCase();
+  const usingTurnRelay = localCandidateType === "relay" || remoteCandidateType === "relay";
+  const routeLabel = selectedPair ? (usingTurnRelay ? "TURN relay" : "Direct") : "—";
+
   const nowMs = Date.now();
 
   let bitrateKbps = NaN;
@@ -1851,6 +1864,11 @@ async function pollStatsOnce() {
     bitrate_kbps: Number.isFinite(bitrateKbps) ? bitrateKbps : 0,
     fps: Number.isFinite(fps) ? fps : 0,
     packets_lost: packetsLost ?? 0,
+    route: usingTurnRelay ? "turn_relay" : (selectedPair ? "direct" : "unknown"),
+    local_candidate_type: localCandidateType,
+    remote_candidate_type: remoteCandidateType,
+    local_protocol: localProtocol,
+    remote_protocol: remoteProtocol,
   }, true);
 
   const state = pc.connectionState || pc.iceConnectionState || "—";
@@ -1865,7 +1883,11 @@ async function pollStatsOnce() {
   }
   if (elDiagIceState) elDiagIceState.textContent = pc.iceConnectionState || "—";
   if (elDiagConnState) elDiagConnState.textContent = pc.connectionState || "—";
-  if (elDiagCandidatePair) elDiagCandidatePair.textContent = selectedPair ? `${selectedPair.localCandidateId || "local"} → ${selectedPair.remoteCandidateId || "remote"}` : "—";
+  if (elDiagCandidatePair) {
+    const localLabel = `${localCandidateType}${localProtocol ? `/${localProtocol}` : ""}`;
+    const remoteLabel = `${remoteCandidateType}${remoteProtocol ? `/${remoteProtocol}` : ""}`;
+    elDiagCandidatePair.textContent = selectedPair ? `${routeLabel} · ${localLabel} → ${remoteLabel}` : "—";
+  }
   if (elDiagBitrate) elDiagBitrate.textContent = brStr;
   if (elDiagFps) elDiagFps.textContent = fpsStr;
   if (elDiagFrames) elDiagFrames.textContent = String(framesDecoded ?? "—");
@@ -2557,9 +2579,10 @@ async function handleOffer(msg) {
     const codecs = caps?.codecs || [];
 
     if (transceiver && transceiver.setCodecPreferences && codecs.length) {
-      // Prefer modern codecs, but keep every browser-supported fallback. The Agent
-      // makes the final selection using endpoint hardware and live encode health.
-      const primaryOrder = ["video/vp8", "video/h264", "video/vp9", "video/av1", "video/h265", "video/hevc"];
+      // Stable Auto prefers VP9 on capable endpoints. Keep VP8 immediately behind
+      // it as the universal compatibility fallback; forced/experimental codecs
+      // remain available without overriding the Agent's stable offer policy.
+      const primaryOrder = ["video/vp9", "video/vp8", "video/h264", "video/av1", "video/h265", "video/hevc"];
       const primary = [];
       for (const wanted of primaryOrder) {
         primary.push(...codecs.filter(c => String(c.mimeType).toLowerCase() === wanted));
