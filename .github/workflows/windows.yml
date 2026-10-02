@@ -24,7 +24,7 @@ jobs:
       - name: Build Viewer
         shell: pwsh
         run: |
-          ./installer/windows/Build-ViewerInstaller.ps1 -Clean -Generator 'Visual Studio 17 2022' -AppVersion "0.1.${{ github.run_number }}"
+          ./installer/windows/Build-ViewerInstaller.ps1 -Clean -Generator 'Visual Studio 17 2022' -AppVersion "0.2.${{ github.run_number }}"
       - name: Validate output
         shell: pwsh
         run: |
