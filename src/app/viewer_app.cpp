@@ -29,6 +29,7 @@
 #include <unistd.h>
 #elif defined(__linux__)
 #include <gtk/gtk.h>
+#include <webkit2/webkit2.h>
 #include <limits.h>
 #include <unistd.h>
 #endif
@@ -56,6 +57,33 @@ namespace hi5 {
             return out;
         }
 
+
+#ifdef __linux__
+        bool ConfigureLinuxWebRtc(webview::webview& w) {
+            auto controllerResult = w.browser_controller();
+            if (!controllerResult.ok() || !controllerResult.value()) {
+                LogError("[linux-webrtc] WebKitWebView controller is unavailable");
+                return false;
+            }
+
+            auto* webView = WEBKIT_WEB_VIEW(controllerResult.value());
+            auto* settings = webkit_web_view_get_settings(webView);
+            if (!settings) {
+                LogError("[linux-webrtc] WebKitSettings is unavailable");
+                return false;
+            }
+
+            // WebKitGTK exposes WebRTC behind an explicit embedding setting.
+            // The standalone browser enables it for normal browsing, but a
+            // minimal embedded WebView cannot be assumed to do so.
+            webkit_settings_set_enable_webrtc(settings, TRUE);
+            webkit_settings_set_enable_media_stream(settings, TRUE);
+
+            const bool enabled = webkit_settings_get_enable_webrtc(settings) == TRUE;
+            LogInfo(std::string("[linux-webrtc] WebRTC setting enabled=") + (enabled ? "true" : "false"));
+            return enabled;
+        }
+#endif
 
 #ifdef _WIN32
         std::string WideToUtf8(const wchar_t* value) {
@@ -1473,6 +1501,9 @@ textarea:focus{border-color:#93b9ff;box-shadow:0 0 0 3px rgba(37,99,235,.09)}
 
         // Production viewer: WebView2 developer tools/inspection must never be exposed.
         webview::webview w(false, nullptr);
+#ifdef __linux__
+        ConfigureLinuxWebRtc(w);
+#endif
         auto chatBridge = std::make_shared<ChatBridge>();
         chatBridge->mainWindow = &w;
         auto fileBridge = std::make_shared<FileBridge>();
