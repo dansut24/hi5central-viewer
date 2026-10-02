@@ -11,6 +11,7 @@
 #include <QWebEngineSettings>
 #include <QWebEngineView>
 #include <QUrl>
+#include <QVariant>
 
 #include <filesystem>
 #include <sstream>
@@ -160,6 +161,28 @@ int ViewerApp::Run(int argc, char* argv[]) {
     bootstrap.setRunsOnSubFrames(false);
     bootstrap.setSourceCode(QString::fromStdString(BuildBootstrapJs(launch)));
     page->scripts().insert(bootstrap);
+
+    const bool selfTestWebRtc =
+        argc >= 2 && argv && argv[1] && std::string(argv[1]) == "--self-test-webrtc";
+
+    if (selfTestWebRtc) {
+        QObject::connect(page, &QWebEnginePage::loadFinished, [&app, page](bool ok) {
+            if (!ok) {
+                LogError("[qt-webengine] WebRTC self-test page failed to load");
+                app.exit(4);
+                return;
+            }
+            page->runJavaScript(
+                "typeof RTCPeerConnection === 'function' && typeof WebSocket === 'function'",
+                [&app](const QVariant& result) {
+                    const bool available = result.toBool();
+                    LogInfo(std::string("[qt-webengine] WebRTC self-test available=") + (available ? "true" : "false"));
+                    app.exit(available ? 0 : 5);
+                });
+        });
+        page->load(QUrl("about:blank"));
+        return app.exec();
+    }
 
     QObject::connect(page, &QWebEnginePage::loadFinished, [&view](bool ok) {
         LogInfo(std::string("[qt-webengine] page load finished ok=") + (ok ? "true" : "false"));
