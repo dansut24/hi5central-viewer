@@ -2811,8 +2811,10 @@ async function onSignalMessage(raw) {
       endpointRestartUntil = 0;
       desktopQualityState = { current: 'good', candidate: null, count: 0, changedAt: Date.now(), samples: [] };
       if (elDesktopQualityIndicator) { elDesktopQualityIndicator.textContent='Measuring'; elDesktopQualityIndicator.dataset.quality='good'; elDesktopQualityIndicator.title='Endpoint returned · stabilising measurements'; }
-      setStatus('', 'Endpoint returned · reconnecting…');
-      showOverlay('Reconnecting', 'Endpoint returned. Restoring the remote session…', { spinner: true, keepVideo: hasEverRenderedFrame });
+      setStatus('', hasEverRenderedFrame ? 'Streaming' : 'Endpoint returned · reconnecting…');
+      if (!hasEverRenderedFrame) {
+        showOverlay('Reconnecting', 'Endpoint returned. Restoring the remote session…', { spinner: true, keepVideo: false });
+      }
       break;
     }
 
@@ -3122,8 +3124,22 @@ function scheduleViewerReconnect(reason = 'network-recovery', { closeSocket = tr
   if (viewerReconnectTimer) return true;
   viewerReconnectAttempts += 1;
   if (elDesktopQualityIndicator) { elDesktopQualityIndicator.textContent='Reconnecting'; elDesktopQualityIndicator.dataset.quality='reconnecting'; elDesktopQualityIndicator.title=reason; }
-  setStatus('', 'Reconnecting…');
-  showOverlay('Reconnecting', 'Restoring the remote session…', { spinner: true, keepVideo: hasEverRenderedFrame });
+  if (hasEverRenderedFrame) {
+    // Once a remote desktop has rendered, transport/source recovery must stay
+    // visually seamless. In particular UAC/Winlogon/desktop hand-offs should
+    // never replace the desktop with a "Connecting" or "Reconnecting" card.
+    setStatus('', 'Streaming');
+    if (secureDesktopActive || desktopHandoffActive || secureDesktopLikely) {
+      showSecureBlackOverlay();
+    } else {
+      hideOverlay();
+      if (elVideo) elVideo.classList.add('visible');
+      if (elStatsBar) elStatsBar.classList.add('visible');
+    }
+  } else {
+    setStatus('', 'Reconnecting…');
+    showOverlay('Reconnecting', 'Restoring the remote session…', { spinner: true, keepVideo: false });
+  }
   teardownPeerForReconnect();
   if (closeSocket && ws) {
     const old = ws; ws = null;
