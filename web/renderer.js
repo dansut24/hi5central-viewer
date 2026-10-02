@@ -40,6 +40,7 @@ const elDeviceLabel  = document.getElementById("device-label");
 const elBtnFiles     = document.getElementById("btn-files");
 const elBtnChat      = document.getElementById("btn-chat");
 const elBtnAudio     = document.getElementById("btn-audio");
+const elBtnAdmin     = document.getElementById("btn-admin");
 const elBtnBlockInput = document.getElementById("btn-block-input");
 const elBtnBackstage = document.getElementById("btn-backstage");
 const elBtnConsole   = document.getElementById("btn-console");
@@ -121,6 +122,8 @@ let desktopModeSwitchStartedAt = 0;
 let desktopModePendingFrames = 0;
 let desktopModeSwitchTimer = null;
 let audioEnabled = false;
+let connectAdminElevated = false;
+let connectAdminPending = false;
 let localInputBlocked = false;
 let remoteDescSet = false;
 let pendingRemoteIce = [];
@@ -1170,6 +1173,58 @@ function setSessionActionVisible(element, visible) {
   element.classList.toggle("is-session-hidden", !visible);
 }
 
+function updateConnectAdminButton() {
+  if (!elBtnAdmin) return;
+  const sessionType = normalizeSessionType(currentSession?.sessionType || "", currentSession?.wssUrl || "");
+  const visible = !!currentSession && sessionType === "connect";
+  setSessionActionVisible(elBtnAdmin, visible);
+  if (!visible) {
+    elBtnAdmin.disabled = true;
+    elBtnAdmin.classList.remove("admin-pending", "admin-granted");
+    elBtnAdmin.title = "Request administrator access";
+    elBtnAdmin.setAttribute("aria-label", "Request administrator access");
+    return;
+  }
+
+  elBtnAdmin.classList.toggle("admin-pending", connectAdminPending && !connectAdminElevated);
+  elBtnAdmin.classList.toggle("admin-granted", connectAdminElevated);
+  if (connectAdminElevated) {
+    elBtnAdmin.disabled = true;
+    elBtnAdmin.title = "Administrator access granted";
+    elBtnAdmin.setAttribute("aria-label", "Administrator access granted");
+  } else if (connectAdminPending) {
+    elBtnAdmin.disabled = true;
+    elBtnAdmin.title = "Waiting for administrator approval";
+    elBtnAdmin.setAttribute("aria-label", "Waiting for administrator approval");
+  } else {
+    elBtnAdmin.disabled = false;
+    elBtnAdmin.title = "Request administrator access";
+    elBtnAdmin.setAttribute("aria-label", "Request administrator access");
+  }
+}
+
+function requestConnectAdminAccess() {
+  if (!currentSession || connectAdminElevated || connectAdminPending) return false;
+  const sessionType = normalizeSessionType(currentSession.sessionType || "", currentSession.wssUrl || "");
+  if (sessionType !== "connect" || !ws || ws.readyState !== WebSocket.OPEN) return false;
+
+  connectAdminPending = true;
+  updateConnectAdminButton();
+  try {
+    ws.send(JSON.stringify({
+      type: "connect_permission_request",
+      session_id: currentSession.sessionId,
+      permission: "elevation"
+    }));
+    viewerNativeLog("requested Connect administrator elevation");
+    return true;
+  } catch {
+    connectAdminPending = false;
+    updateConnectAdminButton();
+    return false;
+  }
+}
+
 function updateSessionActionVisibility() {
   const connected = !!currentSession;
   const sessionType = normalizeSessionType(currentSession?.sessionType || "", currentSession?.wssUrl || "");
@@ -1186,6 +1241,7 @@ function updateSessionActionVisibility() {
   setSessionActionVisible(elBtnFiles, connected && (unattended || connect));
   setSessionActionVisible(elBtnChat, connected && (unattended || connect));
   setSessionActionVisible(elBtnAudio, connected && (unattended || connect));
+  updateConnectAdminButton();
 
   // Blocking the endpoint user's keyboard/mouse is only appropriate for a
   // managed unattended console session. Attended Connect must never expose it.
@@ -1603,6 +1659,9 @@ function disconnect(reason, options = {}) {
   if (elBtnFiles) elBtnFiles.disabled = true;
   if (elBtnChat) elBtnChat.disabled = true;
   if (elBtnAudio) elBtnAudio.disabled = true;
+  connectAdminElevated = false;
+  connectAdminPending = false;
+  if (elBtnAdmin) elBtnAdmin.disabled = true;
   if (elBtnBlockInput) elBtnBlockInput.disabled = true;
   activeDesktopMode = "console";
   desktopModePending = null;
@@ -1616,6 +1675,7 @@ function disconnect(reason, options = {}) {
   if (elBtnCad) elBtnCad.disabled = true;
   if (elDeviceLabel) elDeviceLabel.textContent = "";
   currentSession = null;
+  updateSessionActionVisibility();
 
   setStatus("", reason || "Disconnected");
   showOverlay(
@@ -1640,6 +1700,9 @@ if (elBtnDisc) {
 }
 if (elBtnAudio) {
   elBtnAudio.addEventListener("click", () => setRemoteAudioEnabled(!audioEnabled));
+}
+if (elBtnAdmin) {
+  elBtnAdmin.addEventListener("click", () => requestConnectAdminAccess());
 }
 if (elBtnBlockInput) {
   elBtnBlockInput.addEventListener("click", () => setLocalInputBlocked(!localInputBlocked, true));
@@ -2706,6 +2769,31 @@ async function onSignalMessage(raw) {
     case "viewer_connected":
       break;
 
+    case "connect_capabilities": {
+      if (normalizeSessionType(currentSession?.sessionType || "", currentSession?.wssUrl || "") !== "connect") break;
+      connectAdminElevated = msg.elevated === true;
+      if (connectAdminElevated) connectAdminPending = false;
+      updateConnectAdminButton();
+      break;
+    }
+
+    case "connect_permission_response": {
+      if (String(msg.permission || "").toLowerCase() !== "elevation") break;
+      if (msg.approved === true) {
+        connectAdminElevated = msg.elevated === true;
+        connectAdminPending = !connectAdminElevated;
+        viewerNativeLog(connectAdminElevated
+          ? "Connect administrator access granted"
+          : "Connect administrator approval granted; waiting for elevated host");
+      } else {
+        connectAdminElevated = false;
+        connectAdminPending = false;
+        viewerNativeLog("Connect administrator access declined");
+      }
+      updateConnectAdminButton();
+      break;
+    }
+
     case "agent_reconnecting": {
       const graceMs = Math.max(10000, Number(msg.grace_ms || 0) || 240000);
       endpointRestartUntil = Date.now() + graceMs;
@@ -3090,6 +3178,8 @@ function startSession(params) {
     sessionType,
     launchMode
   };
+  connectAdminElevated = false;
+  connectAdminPending = false;
 
   updateSessionIdentity(sessionType);
   activeDesktopMode = launchMode;
