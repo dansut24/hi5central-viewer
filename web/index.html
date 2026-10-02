@@ -182,16 +182,26 @@
       top: 50%;
       transform: translate(-50%, -50%);
       justify-content: center;
-      max-width: calc(100% - 420px);
+      width: max-content;
+      max-width: calc(100% - 430px);
       z-index: 2;
     }
 
     .right-actions {
+      position: absolute;
+      right: 14px;
+      top: 50%;
+      transform: translateY(-50%);
+      z-index: 3;
       display: flex;
       align-items: center;
-      gap: 10px;
+      gap: 8px;
       justify-content: flex-end;
       min-width: 0;
+    }
+
+    .right-actions #device-label {
+      display: none;
     }
 
     .icon-btn,
