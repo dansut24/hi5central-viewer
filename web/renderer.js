@@ -3201,12 +3201,13 @@ function scheduleViewerTransportProbe(reason = 'transport-probe', delayMs = 3500
 function connectViewerSignaling(reason = 'initial') {
   if (!currentSession) return false;
   if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return true;
-  const { sessionId, deviceId, token, wssUrl, viewerClient } = currentSession;
+  const { sessionId, deviceId, token, wssUrl, viewerClient, viewerVersion } = currentSession;
   const url =
     `${wssUrl}?session_id=${encodeURIComponent(sessionId)}` +
     `&device_id=${encodeURIComponent(deviceId)}` +
     (token ? `&token=${encodeURIComponent(token)}` : '') +
-    (viewerClient ? `&client=${encodeURIComponent(viewerClient)}` : '');
+    (viewerClient ? `&client=${encodeURIComponent(viewerClient)}` : '') +
+    (viewerVersion ? `&viewer_version=${encodeURIComponent(viewerVersion)}` : '');
   console.log('[viewer] opening signaling socket', { sessionId, deviceId, reason, attempt: viewerReconnectAttempts });
   const socket = new WebSocket(url);
   ws = socket;
@@ -3288,6 +3289,7 @@ function startSession(params) {
   const wssUrl = params.wss_url || params.wssUrl || params.signaling_url || params.signalingUrl || "";
   const iceServers = normalizeIceServers(params.ice_servers || params.iceServers || []);
   const viewerClient = params.viewer_client || params.viewerClient || '';
+  const viewerVersion = params.viewer_version || params.viewerVersion || '';
   const sessionType = normalizeSessionType(
     params.session_type || params.sessionType || params.session_kind || params.sessionKind || "",
     wssUrl
@@ -3312,6 +3314,7 @@ function startSession(params) {
     wssUrl,
     iceServers,
     viewerClient,
+    viewerVersion,
     sessionType,
     launchMode
   };
