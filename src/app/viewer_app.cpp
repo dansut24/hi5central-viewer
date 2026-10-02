@@ -19,6 +19,10 @@
 #include <thread>
 #include <vector>
 
+#ifndef HI5CENTRAL_VIEWER_VERSION
+#define HI5CENTRAL_VIEWER_VERSION "0.0.0"
+#endif
+
 #ifdef _WIN32
 #include <windows.h>
 #include <objbase.h>
@@ -1327,7 +1331,9 @@ textarea:focus{border-color:#93b9ff;box-shadow:0 0 0 3px rgba(37,99,235,.09)}
                 << "    wssUrl: \"" << JsEscape(launch.wssUrl) << "\",\n"
                 << "    mode: \"" << JsEscape(launch.mode) << "\",\n"
                 << "    session_type: \"" << JsEscape(launch.sessionType) << "\",\n"
-                << "    sessionType: \"" << JsEscape(launch.sessionType) << "\"\n"
+                << "    sessionType: \"" << JsEscape(launch.sessionType) << "\",\n"
+                << "    viewer_version: \"" << JsEscape(HI5CENTRAL_VIEWER_VERSION) << "\",\n"
+                << "    viewerVersion: \"" << JsEscape(HI5CENTRAL_VIEWER_VERSION) << "\"\n"
                 << "  };\n"
                 << "\n"
                 << "  let connectHandler = null;\n"
@@ -1453,7 +1459,7 @@ textarea:focus{border-color:#93b9ff;box-shadow:0 0 0 3px rgba(37,99,235,.09)}
     } // namespace
 
     int ViewerApp::Run(int argc, char* argv[]) {
-        LogInfo("Viewer starting");
+        LogInfo(std::string("Viewer starting version=") + HI5CENTRAL_VIEWER_VERSION);
         LogInfo("argc=" + std::to_string(argc));
 
         DeepLinkLaunch launch{};
