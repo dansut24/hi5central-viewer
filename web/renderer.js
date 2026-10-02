@@ -1,11 +1,41 @@
 "use strict";
 
+/*
+ * Native viewer hardening.
+ * Keep browser/WebView2 chrome unavailable while preserving right-click
+ * as a remote input event on the streamed desktop.
+ */
+document.addEventListener("contextmenu", (event) => {
+  event.preventDefault();
+}, true);
+document.addEventListener("dragover", (event) => event.preventDefault(), true);
+document.addEventListener("drop", (event) => event.preventDefault(), true);
+
+document.addEventListener("keydown", (event) => {
+  const key = String(event.key || "").toLowerCase();
+  const edgeShortcut =
+    key === "f12" ||
+    (event.ctrlKey && event.shiftKey && ["i", "j", "c"].includes(key)) ||
+    (event.ctrlKey && ["u", "l", "t", "n", "r"].includes(key)) ||
+    (event.altKey && ["left", "right", "home"].includes(key)) ||
+    key === "f6";
+  if (edgeShortcut) event.preventDefault();
+}, true);
+
+document.addEventListener("click", (event) => {
+  const anchor = event.target?.closest?.("a[href]");
+  if (!anchor) return;
+  const href = String(anchor.getAttribute("href") || "");
+  if (/^https?:/i.test(href)) event.preventDefault();
+}, true);
+
 /* -----------------------------------------
    UI elements
 ------------------------------------------ */
 
 const elStatusDot    = document.getElementById("status-dot");
 const elStatusLabel  = document.getElementById("status-label");
+const elSessionTypeLabel = document.getElementById("session-type-label");
 const elDeviceLabel  = document.getElementById("device-label");
 const elBtnFiles     = document.getElementById("btn-files");
 const elBtnChat      = document.getElementById("btn-chat");
@@ -180,13 +210,38 @@ const NEGOTIATION_GRACE_MS = 2500;
    UI helpers
 ------------------------------------------ */
 
+function normalizeSessionType(value, wssUrl = "") {
+  const explicit = String(value || "").trim().toLowerCase();
+  if (explicit === "connect" || explicit === "attended" || explicit === "remote_connect") return "connect";
+  if (explicit === "unattended" || explicit === "managed" || explicit === "agent") return "unattended";
+  return String(wssUrl || "").toLowerCase().includes("connect") ? "connect" : "unattended";
+}
+
+function updateSessionIdentity(type) {
+  const sessionType = normalizeSessionType(type, currentSession?.wssUrl || "");
+  document.body.dataset.sessionType = sessionType;
+  if (elSessionTypeLabel) {
+    elSessionTypeLabel.textContent = sessionType === "connect" ? "Connect" : "Unattended";
+    elSessionTypeLabel.title = sessionType === "connect"
+      ? "Attended Hi5Central Connect session"
+      : "Unattended managed-device session";
+  }
+  document.title = sessionType === "connect"
+    ? "Hi5Central Viewer - Connect"
+    : "Hi5Central Viewer - Unattended";
+}
+
 function setStatus(dotClass, label) {
   const text = String(label || "");
   const hideActiveStreamTag = text === "Streaming" || text.startsWith("Streaming ·") || text === "Switching…" || text === "Switching...";
-  const statusChip = elStatusLabel?.closest(".session-meta");
-  if (statusChip) statusChip.style.display = hideActiveStreamTag ? "none" : "";
-  if (elStatusDot) elStatusDot.className = dotClass || "";
-  if (elStatusLabel) elStatusLabel.textContent = hideActiveStreamTag ? "" : text;
+  if (elStatusDot) {
+    elStatusDot.className = dotClass || "";
+    elStatusDot.style.display = hideActiveStreamTag ? "none" : "";
+  }
+  if (elStatusLabel) {
+    elStatusLabel.textContent = hideActiveStreamTag ? "" : text;
+    elStatusLabel.style.display = hideActiveStreamTag ? "none" : "";
+  }
 }
 
 function setOverlayMode(mode) {
@@ -2965,6 +3020,10 @@ function startSession(params) {
   const wssUrl = params.wss_url || params.wssUrl || params.signaling_url || params.signalingUrl || "";
   const iceServers = normalizeIceServers(params.ice_servers || params.iceServers || []);
   const viewerClient = params.viewer_client || params.viewerClient || '';
+  const sessionType = normalizeSessionType(
+    params.session_type || params.sessionType || params.session_kind || params.sessionKind || "",
+    wssUrl
+  );
   const launchMode = normalizeDesktopMode(params.mode || params.session_mode || params.sessionMode || "console");
 
   if (!sessionId || !deviceId || !token || !wssUrl) {
@@ -2985,9 +3044,11 @@ function startSession(params) {
     wssUrl,
     iceServers,
     viewerClient,
+    sessionType,
     launchMode
   };
 
+  updateSessionIdentity(sessionType);
   activeDesktopMode = launchMode;
   desktopModePending = null;
   backgroundModeLocked = launchMode === "backstage";

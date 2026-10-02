@@ -12,6 +12,7 @@ struct DeepLinkLaunch {
     std::string deviceId;
     std::string wssUrl;
     std::string mode = "console";
+    std::string sessionType = "unattended";
 };
 
 DeepLinkLaunch ParseDeepLink(const std::string& raw);

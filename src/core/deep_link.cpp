@@ -100,6 +100,14 @@ DeepLinkLaunch ParseDeepLink(const std::string& raw) {
         launch.mode = "console";
     }
 
+    launch.sessionType = get("session_type");
+    if (launch.sessionType.empty()) launch.sessionType = get("sessionType");
+    if (launch.sessionType.empty()) launch.sessionType = get("session_kind");
+    if (launch.sessionType.empty()) launch.sessionType = get("sessionKind");
+    if (launch.sessionType != "connect") {
+        launch.sessionType = "unattended";
+    }
+
     launch.valid = !launch.sessionId.empty() && !launch.deviceId.empty() && !launch.wssUrl.empty();
     return launch;
 }

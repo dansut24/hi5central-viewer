@@ -517,6 +517,8 @@ textarea:focus{border-color:#93b9ff;box-shadow:0 0 0 3px rgba(37,99,235,.09)}
 </div>
 <script>
 (function(){
+  document.addEventListener('contextmenu',function(e){e.preventDefault()},true);
+  document.addEventListener('keydown',function(e){var k=String(e.key||'').toLowerCase();if(k==='f12'||(e.ctrlKey&&e.shiftKey&&['i','j','c'].indexOf(k)>=0)||(e.ctrlKey&&['u','l','t','n','r'].indexOf(k)>=0)||k==='f6')e.preventDefault()},true);
   const messages=document.getElementById('messages'),empty=document.getElementById('empty'),input=document.getElementById('input'),send=document.getElementById('send'),closeBtn=document.getElementById('closeBtn');
   function normSender(s){s=String(s||'').toLowerCase();return(s==='tech'||s==='technician'||s==='viewer'||s==='me')?'tech':'user'}
   function bodyOf(m){return String((m&&(m.body??m.message??m.text??m.content))||'').trim()}
@@ -541,7 +543,7 @@ textarea:focus{border-color:#93b9ff;box-shadow:0 0 0 3px rgba(37,99,235,.09)}
                 ".card{max-width:620px;border:1px solid rgba(255,255,255,.12);border-radius:18px;background:#111827;padding:24px;box-shadow:0 20px 60px rgba(0,0,0,.35)}"
                 ".title{font-weight:800;font-size:18px;margin-bottom:8px}.sub{opacity:.7;line-height:1.5;white-space:pre-wrap}"
                 "</style></head><body><div class=\"card\"><div class=\"title\">File browser UI missing</div>"
-                "<div class=\"sub\">Could not load web/file_browser.html. Rebuild after replacing CMakeLists.txt so the file is copied into the build output.</div></div></body></html>";
+                "<div class=\"sub\">Could not load web/file_browser.html. Rebuild after replacing CMakeLists.txt so the file is copied into the build output.</div></div><script>document.addEventListener('contextmenu',function(e){e.preventDefault()},true)</script></body></html>";
         }
 
 
@@ -853,7 +855,7 @@ textarea:focus{border-color:#93b9ff;box-shadow:0 0 0 3px rgba(37,99,235,.09)}
 #endif
                 try {
                     LogInfo("[viewer-files] creating native file browser WebView window");
-                    webview::webview file(true, nullptr);
+                    webview::webview file(false, nullptr);
                     file.set_title("Hi5Central File Browser");
                     file.set_size(1440, 820, WEBVIEW_HINT_NONE);
 
@@ -1064,7 +1066,7 @@ textarea:focus{border-color:#93b9ff;box-shadow:0 0 0 3px rgba(37,99,235,.09)}
 #endif
                 try {
                     LogInfo("[viewer-chat] creating native chat WebView window");
-                    webview::webview chat(true, nullptr);
+                    webview::webview chat(false, nullptr);
                     chat.set_title("Hi5Central Support Chat");
                     chat.set_size(420, 620, WEBVIEW_HINT_NONE);
 
@@ -1167,7 +1169,9 @@ textarea:focus{border-color:#93b9ff;box-shadow:0 0 0 3px rgba(37,99,235,.09)}
                 << "    deviceId: \"" << JsEscape(launch.deviceId) << "\",\n"
                 << "    wss_url: \"" << JsEscape(launch.wssUrl) << "\",\n"
                 << "    wssUrl: \"" << JsEscape(launch.wssUrl) << "\",\n"
-                << "    mode: \"" << JsEscape(launch.mode) << "\"\n"
+                << "    mode: \"" << JsEscape(launch.mode) << "\",\n"
+                << "    session_type: \"" << JsEscape(launch.sessionType) << "\",\n"
+                << "    sessionType: \"" << JsEscape(launch.sessionType) << "\"\n"
                 << "  };\n"
                 << "\n"
                 << "  let connectHandler = null;\n"
@@ -1286,7 +1290,8 @@ textarea:focus{border-color:#93b9ff;box-shadow:0 0 0 3px rgba(37,99,235,.09)}
                 << ".msg{font-size:14px;line-height:1.5;opacity:.9;white-space:pre-wrap;}"
                 << "</style></head><body>"
                 << "<div class=\"card\"><div class=\"title\">Hi5Central Viewer</div>"
-                << "<div class=\"msg\">" << message << "</div></div></body></html>";
+                << "<div class=\"msg\">" << message << "</div></div>"
+                << "<script>document.addEventListener('contextmenu',function(e){e.preventDefault()},true)</script></body></html>";
             return html.str();
         }
 
@@ -1304,6 +1309,7 @@ textarea:focus{border-color:#93b9ff;box-shadow:0 0 0 3px rgba(37,99,235,.09)}
             LogInfo("Deep link session_id=" + launch.sessionId);
             LogInfo("Deep link device_id=" + launch.deviceId);
             LogInfo("Deep link mode=" + launch.mode);
+            LogInfo("Deep link session_type=" + launch.sessionType);
         }
         else {
             LogWarn("No deep link provided");
@@ -1326,7 +1332,8 @@ textarea:focus{border-color:#93b9ff;box-shadow:0 0 0 3px rgba(37,99,235,.09)}
         LogInfo("rendererPath=" + rendererPath.string());
         LogInfo("fileBrowserPath=" + fileBrowserPath.string());
 
-        webview::webview w(true, nullptr);
+        // Production viewer: WebView2 developer tools/inspection must never be exposed.
+        webview::webview w(false, nullptr);
         auto chatBridge = std::make_shared<ChatBridge>();
         chatBridge->mainWindow = &w;
         auto fileBridge = std::make_shared<FileBridge>();
@@ -1386,7 +1393,7 @@ textarea:focus{border-color:#93b9ff;box-shadow:0 0 0 3px rgba(37,99,235,.09)}
         w.bind("hi5SetClipboardText", [](std::string req) -> std::string { return WriteLocalClipboardText(ParseFirstJsonStringArg(req)) ? "true" : "false"; });
         w.bind("hi5WriteClipboardText", [](std::string req) -> std::string { return WriteLocalClipboardText(ParseFirstJsonStringArg(req)) ? "true" : "false"; });
 
-        w.set_title("Hi5Central Viewer");
+        w.set_title(launch.sessionType == "connect" ? "Hi5Central Viewer - Connect" : "Hi5Central Viewer - Unattended");
         w.set_size(1280, 800, WEBVIEW_HINT_NONE);
 #ifdef _WIN32
         InstallViewerKeyboardHook(w);

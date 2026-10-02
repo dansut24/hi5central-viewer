@@ -37,11 +37,13 @@ target_link_libraries(hi5tech-viewer PRIVATE
 )
 
 if (WIN32)
+    set_target_properties(hi5tech-viewer PROPERTIES WIN32_EXECUTABLE TRUE)
     target_compile_definitions(hi5tech-viewer PRIVATE
         WIN32_LEAN_AND_MEAN
         NOMINMAX
         _CRT_SECURE_NO_WARNINGS
     )
+    target_link_libraries(hi5tech-viewer PRIVATE shell32)
 endif()
 
 add_custom_command(TARGET hi5tech-viewer POST_BUILD
