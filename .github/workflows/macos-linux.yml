@@ -1,0 +1,94 @@
+name: Viewer macOS + Linux
+
+on:
+  workflow_dispatch:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ninja-build \
+            libgtk-3-dev \
+            libwebkit2gtk-4.1-dev
+
+      - name: Configure
+        run: cmake -G Ninja -B build -S . -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build --parallel 2
+
+      - name: Validate Linux output
+        run: |
+          test -x build/Hi5CentralViewer
+          test -f build/web/index.html
+          test -f build/web/renderer.js
+          test -f build/web/file_browser.html
+          ldd build/Hi5CentralViewer
+
+      - name: Package Linux test build
+        run: |
+          mkdir -p dist/linux/web
+          cp build/Hi5CentralViewer dist/linux/
+          cp web/index.html web/renderer.js web/file_browser.html dist/linux/web/
+          cp installer/linux/install.sh installer/linux/uninstall.sh dist/linux/
+          chmod +x dist/linux/Hi5CentralViewer dist/linux/install.sh dist/linux/uninstall.sh
+          tar -C dist/linux -czf dist/Hi5CentralViewer-linux-x64.tar.gz .
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Hi5Central-Viewer-Linux-x64
+          path: dist/Hi5CentralViewer-linux-x64.tar.gz
+          retention-days: 14
+          if-no-files-found: error
+
+  build-macos:
+    runs-on: macos-14
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -B build -S . -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build --parallel 2
+
+      - name: Validate macOS app bundle
+        run: |
+          test -d build/Hi5CentralViewer.app
+          test -x build/Hi5CentralViewer.app/Contents/MacOS/Hi5CentralViewer
+          test -x build/Hi5CentralViewer.app/Contents/MacOS/Hi5CentralViewerCore
+          test -f build/Hi5CentralViewer.app/Contents/Resources/web/index.html
+          test -f build/Hi5CentralViewer.app/Contents/Resources/web/renderer.js
+          test -f build/Hi5CentralViewer.app/Contents/Resources/web/file_browser.html
+          plutil -lint build/Hi5CentralViewer.app/Contents/Info.plist
+          /usr/bin/otool -L build/Hi5CentralViewer.app/Contents/MacOS/Hi5CentralViewerCore
+
+      - name: Ad-hoc sign test bundle
+        run: codesign --force --deep --sign - build/Hi5CentralViewer.app
+
+      - name: Package macOS test build
+        run: |
+          mkdir -p dist
+          ditto -c -k --sequesterRsrc --keepParent \
+            build/Hi5CentralViewer.app \
+            dist/Hi5CentralViewer-macOS-universal-test.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Hi5Central-Viewer-macOS
+          path: dist/Hi5CentralViewer-macOS-universal-test.zip
+          retention-days: 14
+          if-no-files-found: error
