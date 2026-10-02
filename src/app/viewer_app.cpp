@@ -23,6 +23,14 @@
 #include <windows.h>
 #include <objbase.h>
 #include <shellapi.h>
+#elif defined(__APPLE__)
+#include <limits.h>
+#include <mach-o/dyld.h>
+#include <unistd.h>
+#elif defined(__linux__)
+#include <gtk/gtk.h>
+#include <limits.h>
+#include <unistd.h>
 #endif
 
 namespace hi5 {
@@ -87,8 +95,60 @@ namespace hi5 {
             if (GetComputerNameA(name, &len) && len > 0) {
                 return std::string("This PC - ") + std::string(name, len);
             }
+#else
+            char name[256]{};
+            if (gethostname(name, sizeof(name) - 1) == 0 && name[0] != '\0') {
+#if defined(__APPLE__)
+                return std::string("This Mac - ") + name;
+#else
+                return std::string("This computer - ") + name;
 #endif
+            }
+#endif
+#if defined(__APPLE__)
+            return "This Mac";
+#elif defined(_WIN32)
             return "This PC";
+#else
+            return "This computer";
+#endif
+        }
+
+        std::filesystem::path ExecutableDirectory() {
+#ifdef _WIN32
+            char modulePath[MAX_PATH]{};
+            const DWORD length = GetModuleFileNameA(nullptr, modulePath, MAX_PATH);
+            if (length > 0 && length < MAX_PATH) {
+                return std::filesystem::path(modulePath).parent_path();
+            }
+#elif defined(__APPLE__)
+            uint32_t size = 0;
+            _NSGetExecutablePath(nullptr, &size);
+            if (size > 0) {
+                std::vector<char> buffer(static_cast<std::size_t>(size) + 1, '\0');
+                if (_NSGetExecutablePath(buffer.data(), &size) == 0) {
+                    std::error_code ec;
+                    const auto resolved = std::filesystem::weakly_canonical(std::filesystem::path(buffer.data()), ec);
+                    return (ec ? std::filesystem::path(buffer.data()) : resolved).parent_path();
+                }
+            }
+#elif defined(__linux__)
+            std::error_code ec;
+            const auto resolved = std::filesystem::read_symlink("/proc/self/exe", ec);
+            if (!ec && !resolved.empty()) return resolved.parent_path();
+#endif
+            return std::filesystem::current_path();
+        }
+
+        std::filesystem::path ViewerResourceDirectory() {
+            const auto exeDir = ExecutableDirectory();
+#ifdef __APPLE__
+            // The viewer core lives in Hi5CentralViewer.app/Contents/MacOS and
+            // its web assets live in Contents/Resources.
+            const auto bundleResources = exeDir.parent_path() / "Resources";
+            if (std::filesystem::exists(bundleResources / "web")) return bundleResources;
+#endif
+            return exeDir;
         }
 
         std::string ShortRemoteLabel(const std::string& deviceId) {
@@ -292,6 +352,23 @@ namespace hi5 {
                 }
                 Sleep(10);
             }
+#elif defined(__APPLE__)
+            FILE* pipe = popen("/usr/bin/pbpaste", "r");
+            if (!pipe) return {};
+            std::string out;
+            char buffer[4096];
+            while (std::fgets(buffer, static_cast<int>(sizeof(buffer)), pipe)) out += buffer;
+            const int rc = pclose(pipe);
+            return rc == 0 ? out : std::string{};
+#elif defined(__linux__)
+            if (GtkClipboard* clipboard = gtk_clipboard_get(GDK_SELECTION_CLIPBOARD)) {
+                gchar* text = gtk_clipboard_wait_for_text(clipboard);
+                if (text) {
+                    std::string out(text);
+                    g_free(text);
+                    return out;
+                }
+            }
 #endif
             return {};
         }
@@ -315,6 +392,18 @@ namespace hi5 {
                 }
                 Sleep(10);
             }
+#elif defined(__APPLE__)
+            FILE* pipe = popen("/usr/bin/pbcopy", "w");
+            if (!pipe) return false;
+            const std::size_t written = text.empty() ? 0 : std::fwrite(text.data(), 1, text.size(), pipe);
+            const int rc = pclose(pipe);
+            return rc == 0 && (text.empty() || written == text.size());
+#elif defined(__linux__)
+            if (GtkClipboard* clipboard = gtk_clipboard_get(GDK_SELECTION_CLIPBOARD)) {
+                gtk_clipboard_set_text(clipboard, text.c_str(), static_cast<gint>(text.size()));
+                gtk_clipboard_store(clipboard);
+                return true;
+            }
 #endif
             return false;
         }
@@ -324,6 +413,14 @@ namespace hi5 {
             char userProfile[MAX_PATH]{};
             DWORD n = GetEnvironmentVariableA("USERPROFILE", userProfile, MAX_PATH);
             if (n > 0 && n < MAX_PATH) return std::filesystem::path(userProfile) / "Desktop";
+#else
+            if (const char* home = std::getenv("HOME"); home && *home) {
+                const auto homePath = std::filesystem::path(home);
+                std::error_code ec;
+                const auto desktop = homePath / "Desktop";
+                if (std::filesystem::exists(desktop, ec) && std::filesystem::is_directory(desktop, ec)) return desktop;
+                return homePath;
+            }
 #endif
             return std::filesystem::current_path();
         }
@@ -1363,18 +1460,12 @@ textarea:focus{border-color:#93b9ff;box-shadow:0 0 0 3px rgba(37,99,235,.09)}
 #endif
         }
 
-        std::filesystem::path exeDir;
-#ifdef _WIN32
-        char modulePath[MAX_PATH]{};
-        GetModuleFileNameA(nullptr, modulePath, MAX_PATH);
-        exeDir = std::filesystem::path(modulePath).parent_path();
-#else
-        exeDir = std::filesystem::current_path();
-#endif
+        const std::filesystem::path exeDir = ExecutableDirectory();
+        const std::filesystem::path resourceDir = ViewerResourceDirectory();
 
-        const auto indexPath = exeDir / "web" / "index.html";
-        const auto rendererPath = exeDir / "web" / "renderer.js";
-        const auto fileBrowserPath = exeDir / "web" / "file_browser.html";
+        const auto indexPath = resourceDir / "web" / "index.html";
+        const auto rendererPath = resourceDir / "web" / "renderer.js";
+        const auto fileBrowserPath = resourceDir / "web" / "file_browser.html";
 
         LogInfo("indexPath=" + indexPath.string());
         LogInfo("rendererPath=" + rendererPath.string());
@@ -1421,6 +1512,11 @@ textarea:focus{border-color:#93b9ff;box-shadow:0 0 0 3px rgba(37,99,235,.09)}
 #ifdef _WIN32
         w.bind("hi5CloseViewer", [](std::string) -> std::string {
             ApproveAndCloseViewer();
+            return "true";
+            });
+#else
+        w.bind("hi5CloseViewer", [&w](std::string) -> std::string {
+            w.terminate();
             return "true";
             });
 #endif
