@@ -2387,6 +2387,82 @@ function logSdpCodecSummary(label, sdp) {
   return codecs;
 }
 
+function sdpFmtpParam(fmtp, name) {
+  const wanted = String(name || "").toLowerCase();
+  for (const rawPart of String(fmtp || "").split(";")) {
+    const part = rawPart.trim();
+    if (!part) continue;
+    const eq = part.indexOf("=");
+    const key = (eq >= 0 ? part.slice(0, eq) : part).trim().toLowerCase();
+    if (key !== wanted) continue;
+    return eq >= 0 ? part.slice(eq + 1).trim() : "";
+  }
+  return "";
+}
+
+function withSdpFmtpParam(fmtp, name, value) {
+  const wanted = String(name || "").toLowerCase();
+  let replaced = false;
+  const parts = String(fmtp || "").split(";").map((rawPart) => {
+    const part = rawPart.trim();
+    if (!part) return "";
+    const eq = part.indexOf("=");
+    const key = (eq >= 0 ? part.slice(0, eq) : part).trim().toLowerCase();
+    if (key !== wanted) return part;
+    replaced = true;
+    return `${name}=${value}`;
+  }).filter(Boolean);
+  if (!replaced) parts.push(`${name}=${value}`);
+  return parts.join(";");
+}
+
+function normalizeH264AnswerReceiveLevel(answerSdp, offerSdp) {
+  const offeredH264 = extractSdpVideoCodecs(offerSdp)
+    .filter((item) => String(item.codec || "").toLowerCase().startsWith("h264/"));
+  if (!offeredH264.length) return String(answerSdp || "");
+
+  const answerH264 = extractSdpVideoCodecs(answerSdp)
+    .filter((item) => String(item.codec || "").toLowerCase().startsWith("h264/"));
+  const receiveLevelByPayload = new Map();
+
+  for (const answerCodec of answerH264) {
+    const packetizationMode = sdpFmtpParam(answerCodec.fmtp, "packetization-mode");
+    const asymmetry = sdpFmtpParam(answerCodec.fmtp, "level-asymmetry-allowed");
+    const answerProfile = sdpFmtpParam(answerCodec.fmtp, "profile-level-id").toLowerCase();
+    if (packetizationMode !== "1" || asymmetry !== "1" || !/^[0-9a-f]{6}$/.test(answerProfile)) continue;
+
+    const offeredCodec = offeredH264.find((item) => item.pt === answerCodec.pt)
+      || offeredH264.find((item) => sdpFmtpParam(item.fmtp, "packetization-mode") === "1");
+    if (!offeredCodec) continue;
+
+    const offeredProfile = sdpFmtpParam(offeredCodec.fmtp, "profile-level-id").toLowerCase();
+    if (!/^[0-9a-f]{6}$/.test(offeredProfile)) continue;
+    if (offeredProfile.slice(0, 2) !== answerProfile.slice(0, 2)) continue;
+
+    const offeredLevel = parseInt(offeredProfile.slice(-2), 16);
+    const answerLevel = parseInt(answerProfile.slice(-2), 16);
+    if (!Number.isFinite(offeredLevel) || !Number.isFinite(answerLevel) || offeredLevel <= answerLevel) continue;
+
+    receiveLevelByPayload.set(answerCodec.pt, offeredProfile.slice(2));
+    console.log("[codec] advertising native H.264 receive level", {
+      payloadType: answerCodec.pt,
+      answerProfileLevelId: answerProfile,
+      offeredProfileLevelId: offeredProfile,
+      maxRecvLevel: offeredProfile.slice(2)
+    });
+  }
+
+  if (!receiveLevelByPayload.size) return String(answerSdp || "");
+  const separator = String(answerSdp || "").includes("\r\n") ? "\r\n" : "\n";
+  return String(answerSdp || "").split(/\r?\n/).map((line) => {
+    const match = line.match(/^a=fmtp:(\d+)\s+(.+)$/i);
+    if (!match) return line;
+    const maxRecvLevel = receiveLevelByPayload.get(match[1]);
+    if (!maxRecvLevel) return line;
+    return `a=fmtp:${match[1]} ${withSdpFmtpParam(match[2], "max-recv-level", maxRecvLevel)}`;
+  }).join(separator);
+}
+
 function codecKeyFromLabel(value) {
   const text = String(value || "").toLowerCase();
   if (text.includes("av1")) return "av1";
@@ -2766,10 +2842,15 @@ async function handleOffer(msg) {
   await pc.setLocalDescription(answer);
   logSdpCodecSummary("local answer", answer.sdp);
 
+  const signaledAnswerSdp = normalizeH264AnswerReceiveLevel(answer.sdp, offerSdp);
+  if (signaledAnswerSdp !== answer.sdp) {
+    logSdpCodecSummary("signaled answer", signaledAnswerSdp);
+  }
+
   ws.send(JSON.stringify({
     type: "webrtc_answer",
     session_id: currentSession.sessionId,
-    sdp: answer.sdp,
+    sdp: signaledAnswerSdp,
     sdp_type: answer.type
   }));
 }
