@@ -7,6 +7,7 @@
 #include <QCoreApplication>
 #include <QWebEnginePage>
 #include <QWebEngineScript>
+#include <QWebEngineScriptCollection>
 #include <QWebEngineSettings>
 #include <QWebEngineView>
 #include <QUrl>
