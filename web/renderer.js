@@ -133,6 +133,7 @@ let viewerReconnectAttempts = 0;
 let viewerTransportProbeTimer = null;
 let endpointRestartUntil = 0;
 let viewerReconnectCooldownUntil = 0;
+let viewerFatalTransportError = false;
 
 let statsTimer = null;
 let transitionWatchdogTimer = null;
@@ -2626,10 +2627,23 @@ async function handleOffer(msg) {
 
   if (typeof RTCPeerConnection !== "function") {
     const detail = "RTCPeerConnection is unavailable in this Viewer runtime.";
+    viewerFatalTransportError = true;
+    if (viewerReconnectTimer) { clearTimeout(viewerReconnectTimer); viewerReconnectTimer = null; }
+    clearViewerTransportProbe();
+    viewerReconnectDeadline = 0;
+    if (ws) {
+      const fatalSocket = ws;
+      ws = null;
+      try {
+        fatalSocket.onclose = null;
+        fatalSocket.onerror = null;
+        fatalSocket.close(4003, "WebRTC unavailable");
+      } catch {}
+    }
     console.error("[webrtc] " + detail);
     viewerNativeLog("[webrtc] " + detail);
     setStatus("error", "WebRTC unavailable");
-    showOverlay("WebRTC unavailable", "This Linux Viewer runtime does not have WebRTC enabled. Install the latest Hi5Central Viewer and try again.", { spinner: false, keepVideo: false });
+    showOverlay("WebRTC unavailable", "This Viewer runtime cannot provide WebRTC. Install the latest Hi5Central Viewer and try again.", { spinner: false, keepVideo: false });
     return;
   }
 
@@ -3199,7 +3213,7 @@ function scheduleViewerTransportProbe(reason = 'transport-probe', delayMs = 3500
 }
 
 function connectViewerSignaling(reason = 'initial') {
-  if (!currentSession) return false;
+  if (!currentSession || viewerFatalTransportError) return false;
   if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return true;
   const { sessionId, deviceId, token, wssUrl, viewerClient, viewerVersion } = currentSession;
   const url =
@@ -3239,7 +3253,7 @@ function connectViewerSignaling(reason = 'initial') {
 }
 
 function scheduleViewerReconnect(reason = 'network-recovery', { closeSocket = true } = {}) {
-  if (!currentSession || endpointRestartUntil > Date.now()) return false;
+  if (!currentSession || viewerFatalTransportError || endpointRestartUntil > Date.now()) return false;
   const now = Date.now();
   if (!viewerReconnectDeadline) viewerReconnectDeadline = now + 85000;
   if (now >= viewerReconnectDeadline) { disconnect('Connection lost'); return false; }
@@ -3352,6 +3366,7 @@ function startSession(params) {
 
   viewerReconnectDeadline = 0;
   viewerReconnectAttempts = 0;
+  viewerFatalTransportError = false;
   endpointRestartUntil = 0;
   connectViewerSignaling('initial');
 }
