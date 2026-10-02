@@ -2624,6 +2624,15 @@ async function handleOffer(msg) {
   const offerSdp = msg?.sdp;
   if (!offerSdp) return;
 
+  if (typeof RTCPeerConnection !== "function") {
+    const detail = "RTCPeerConnection is unavailable in this Viewer runtime.";
+    console.error("[webrtc] " + detail);
+    viewerNativeLog("[webrtc] " + detail);
+    setStatus("error", "WebRTC unavailable");
+    showOverlay("WebRTC unavailable", "This Linux Viewer runtime does not have WebRTC enabled. Install the latest Hi5Central Viewer and try again.", { spinner: false, keepVideo: false });
+    return;
+  }
+
   if (pc) teardownPeerForReconnect();
   endpointRestartUntil = 0;
   logSdpCodecSummary("remote offer", offerSdp);
@@ -2934,7 +2943,15 @@ async function onSignalMessage(raw) {
       break;
 
     case "webrtc_offer":
-      await handleOffer(msg);
+      try {
+        await handleOffer(msg);
+      } catch (error) {
+        const detail = String(error?.message || error || "Unknown WebRTC negotiation error");
+        console.error("[webrtc] negotiation failed", error);
+        viewerNativeLog("[webrtc] negotiation failed: " + detail);
+        setStatus("error", "WebRTC negotiation failed");
+        showOverlay("Unable to start remote session", detail, { spinner: false, keepVideo: false });
+      }
       break;
 
     case "ice_candidate":
@@ -3323,6 +3340,9 @@ function startSession(params) {
   if (elBtnStartMenu) elBtnStartMenu.disabled = false;
   if (elBtnCad) elBtnCad.disabled = false;
   if (elDeviceLabel) elDeviceLabel.textContent = deviceId || "";
+
+  const webRtcAvailable = typeof RTCPeerConnection === "function";
+  viewerNativeLog("[webrtc] RTCPeerConnection available=" + (webRtcAvailable ? "true" : "false"));
 
   setStatus("", "Connecting…");
   showOverlay("Connecting", "Starting remote session…", { spinner: true });

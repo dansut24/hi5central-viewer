@@ -60,7 +60,7 @@ jobs:
           Section: net
           Priority: optional
           Architecture: amd64
-          Depends: libgtk-3-0, libwebkit2gtk-4.1-0
+          Depends: libgtk-3-0, libwebkit2gtk-4.1-0, gstreamer1.0-plugins-bad, gstreamer1.0-libav
           Maintainer: Hi5Central
           Description: Hi5Central native remote desktop Viewer
            Native desktop Viewer for Hi5Central RMM remote support sessions.
