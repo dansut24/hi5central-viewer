@@ -236,6 +236,20 @@
     }
 
     .icon-btn.session-toggle-active { background: #dbeafe; color: #1d4ed8; border-color: #93c5fd; }
+    #btn-admin svg { width: 17px; height: 17px; display: block; }
+    #btn-admin.admin-pending {
+      color: #fbbf24;
+      border-color: rgba(251,191,36,.34);
+      background: rgba(251,191,36,.09);
+      opacity: 1;
+    }
+    #btn-admin.admin-granted,
+    #btn-admin.admin-granted:disabled {
+      color: #86efac;
+      border-color: rgba(134,239,172,.32);
+      background: rgba(34,197,94,.10);
+      opacity: 1;
+    }
     .icon-btn:active,
     #btn-monitor:active,
     #btn-disconnect:active { transform: translateY(1px); }
@@ -685,6 +699,13 @@
     <button id="btn-files" class="icon-btn" disabled title="Files" aria-label="Files">📁<span class="label">Files</span></button>
     <button id="btn-chat" class="icon-btn" disabled title="Chat" aria-label="Chat">💬<span class="label">Chat</span></button>
     <button id="btn-audio" class="icon-btn" disabled title="Play remote audio" aria-label="Remote audio">🔇<span class="label">Audio</span></button>
+    <button id="btn-admin" class="icon-btn" hidden disabled title="Request administrator access" aria-label="Request administrator access">
+      <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path d="M12 3.2 19 6v5.1c0 4.5-2.8 8.3-7 9.7-4.2-1.4-7-5.2-7-9.7V6l7-2.8Z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>
+        <path d="M12 15.8V8.4m0 0-2.6 2.6M12 8.4l2.6 2.6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      <span class="label">Admin</span>
+    </button>
     <button id="btn-block-input" class="icon-btn" disabled title="Block the local user's keyboard and mouse" aria-label="Block local keyboard and mouse">🔓<span class="label">User input</span></button>
     <button id="btn-backstage" class="icon-btn" disabled title="Backstage Desktop" aria-label="Backstage Desktop">🧰<span class="label">Backstage</span></button>
     <button id="btn-console" class="icon-btn" disabled title="Console Desktop" aria-label="Console Desktop">🖥️<span class="label">Console</span></button>
