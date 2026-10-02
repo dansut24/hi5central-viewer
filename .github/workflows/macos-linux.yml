@@ -20,8 +20,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             ninja-build \
-            libgtk-3-dev \
-            libwebkit2gtk-4.1-dev
+            qt6-base-dev \
+            qt6-webengine-dev \
+            xvfb
 
       - name: Configure
         run: cmake -G Ninja -B build -S . -DCMAKE_BUILD_TYPE=Release -DHI5CENTRAL_VIEWER_VERSION=0.2.${GITHUB_RUN_NUMBER}
@@ -36,6 +37,10 @@ jobs:
           test -f build/web/renderer.js
           test -f build/web/file_browser.html
           ldd build/Hi5CentralViewer
+          xvfb-run -a env \
+            QTWEBENGINE_DISABLE_SANDBOX=1 \
+            QTWEBENGINE_CHROMIUM_FLAGS=--disable-gpu \
+            build/Hi5CentralViewer --self-test-webrtc
 
       - name: Package Linux DEB
         run: |
@@ -60,7 +65,7 @@ jobs:
           Section: net
           Priority: optional
           Architecture: amd64
-          Depends: libgtk-3-0, libwebkit2gtk-4.1-0, gstreamer1.0-plugins-bad, gstreamer1.0-libav
+          Depends: libqt6webenginewidgets6
           Maintainer: Hi5Central
           Description: Hi5Central native remote desktop Viewer
            Native desktop Viewer for Hi5Central RMM remote support sessions.

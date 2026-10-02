@@ -12,33 +12,38 @@ if (APPLE)
     enable_language(OBJCXX)
 endif()
 
-include(FetchContent)
-
-# Use WebKitGTK 4.1 / GTK 3 on Linux. This is broadly available on supported
-# Debian/Ubuntu desktops and also gives the native shell a stable GTK clipboard API.
-if (UNIX AND NOT APPLE)
-    set(WEBVIEW_WEBKITGTK_API "4.1" CACHE STRING "" FORCE)
-endif()
-
-FetchContent_Declare(
-    webview
-    GIT_REPOSITORY https://github.com/webview/webview.git
-    GIT_TAG 0.12.0
-)
-
-set(WEBVIEW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
-set(WEBVIEW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-set(WEBVIEW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
-set(WEBVIEW_BUILD_AMALGAMATION OFF CACHE BOOL "" FORCE)
-
-FetchContent_MakeAvailable(webview)
-
-add_executable(hi5tech-viewer
+set(HI5_VIEWER_COMMON_SOURCES
     src/main.cpp
-    src/app/viewer_app.cpp
     src/core/logger.cpp
     src/core/deep_link.cpp
 )
+
+if (UNIX AND NOT APPLE)
+    find_package(Qt6 REQUIRED COMPONENTS Widgets WebEngineWidgets)
+    add_executable(hi5tech-viewer
+        ${HI5_VIEWER_COMMON_SOURCES}
+        src/app/viewer_app_linux_qt.cpp
+    )
+else()
+    include(FetchContent)
+    FetchContent_Declare(
+        webview
+        GIT_REPOSITORY https://github.com/webview/webview.git
+        GIT_TAG 0.12.0
+    )
+
+    set(WEBVIEW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+    set(WEBVIEW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    set(WEBVIEW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
+    set(WEBVIEW_BUILD_AMALGAMATION OFF CACHE BOOL "" FORCE)
+    FetchContent_MakeAvailable(webview)
+
+    add_executable(hi5tech-viewer
+        ${HI5_VIEWER_COMMON_SOURCES}
+        src/app/viewer_app.cpp
+    )
+    target_link_libraries(hi5tech-viewer PRIVATE webview::core)
+endif()
 
 target_include_directories(hi5tech-viewer PRIVATE
     src
@@ -48,14 +53,7 @@ target_compile_definitions(hi5tech-viewer PRIVATE
     HI5CENTRAL_VIEWER_VERSION="${HI5CENTRAL_VIEWER_VERSION}"
 )
 
-target_link_libraries(hi5tech-viewer PRIVATE
-    webview::core
-)
-
 if (WIN32)
-    # Keep the console subsystem for the exact URL-protocol argv behaviour used
-    # by the last known-good Viewer builds. main() hides/detaches the console
-    # immediately on startup so no background CMD window remains.
     target_compile_definitions(hi5tech-viewer PRIVATE
         WIN32_LEAN_AND_MEAN
         NOMINMAX
@@ -64,16 +62,13 @@ if (WIN32)
 elseif (APPLE)
     target_compile_definitions(hi5tech-viewer PRIVATE HI5_VIEWER_MACOS=1)
 else()
-    find_package(PkgConfig REQUIRED)
-    pkg_check_modules(GTK3 REQUIRED IMPORTED_TARGET gtk+-3.0)
-    pkg_check_modules(WEBKIT41 REQUIRED IMPORTED_TARGET webkit2gtk-4.1)
-    target_link_libraries(hi5tech-viewer PRIVATE PkgConfig::GTK3 PkgConfig::WEBKIT41)
-    target_compile_definitions(hi5tech-viewer PRIVATE HI5_VIEWER_LINUX=1)
+    target_link_libraries(hi5tech-viewer PRIVATE
+        Qt6::Widgets
+        Qt6::WebEngineWidgets
+    )
+    target_compile_definitions(hi5tech-viewer PRIVATE HI5_VIEWER_LINUX=1 HI5_VIEWER_QT_WEBENGINE=1)
 endif()
 
-# Keep the viewer web shell adjacent to the native executable for Windows/Linux
-# development builds. The macOS launcher target copies the same assets into its
-# .app Resources directory below.
 add_custom_command(TARGET hi5tech-viewer POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:hi5tech-viewer>/web"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
@@ -88,10 +83,6 @@ add_custom_command(TARGET hi5tech-viewer POST_BUILD
 )
 
 if (APPLE)
-    # The visible .app is a tiny LaunchServices URL handler. macOS delivers
-    # custom URL schemes as application events rather than argv, so the launcher
-    # starts a separate viewer core process with the URL as argv[1]. This also
-    # keeps concurrent remote sessions possible.
     add_executable(hi5central-viewer-launcher MACOSX_BUNDLE
         installer/macos/launcher.mm
     )
@@ -129,8 +120,6 @@ if (APPLE)
             "$<TARGET_BUNDLE_DIR:hi5central-viewer-launcher>/Contents/Resources/web/file_browser.html"
     )
 else()
-    # Hi5Central rebrand: keep internal target for compatibility, but output the
-    # product name used by the existing Windows installer and Linux package.
     set_target_properties(hi5tech-viewer PROPERTIES
         OUTPUT_NAME "Hi5CentralViewer"
     )
