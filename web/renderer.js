@@ -1164,6 +1164,50 @@ function normalizeDesktopMode(mode) {
   return (value === "backstage" || value === "background" || value === "background_mode") ? "backstage" : "console";
 }
 
+function setSessionActionVisible(element, visible) {
+  if (!element) return;
+  element.hidden = !visible;
+  element.classList.toggle("is-session-hidden", !visible);
+}
+
+function updateSessionActionVisibility() {
+  const connected = !!currentSession;
+  const sessionType = normalizeSessionType(currentSession?.sessionType || "", currentSession?.wssUrl || "");
+  const mode = normalizeDesktopMode(currentSession?.launchMode || activeDesktopMode);
+  const consoleMode = mode === "console";
+  const unattended = sessionType === "unattended";
+  const connect = sessionType === "connect";
+
+  // Session-mode buttons are not actions in the current locked-mode model.
+  // Never show a disabled Background/Console toggle just to describe state.
+  setSessionActionVisible(elBtnBackstage, false);
+  setSessionActionVisible(elBtnConsole, false);
+
+  setSessionActionVisible(elBtnFiles, connected && (unattended || connect));
+  setSessionActionVisible(elBtnChat, connected && (unattended || connect));
+  setSessionActionVisible(elBtnAudio, connected && (unattended || connect));
+
+  // Blocking the endpoint user's keyboard/mouse is only appropriate for a
+  // managed unattended console session. Attended Connect must never expose it.
+  setSessionActionVisible(elBtnBlockInput, connected && unattended && consoleMode);
+
+  // Console shortcuts are meaningful on both unattended and attended Connect
+  // sessions, but not on a background/backstage desktop.
+  setSessionActionVisible(elBtnStartMenu, connected && consoleMode);
+  setSessionActionVisible(elBtnCad, connected && consoleMode);
+
+  setSessionActionVisible(elBtnMonitor, connected && consoleMode);
+  setSessionActionVisible(elBtnSettings, true);
+
+  document.body.dataset.sessionProfile = !connected
+    ? "idle"
+    : connect
+      ? "connect"
+      : mode === "backstage"
+        ? "unattended-background"
+        : "unattended-console";
+}
+
 function updateDesktopModeButtons() {
   const connected = !!currentSession;
   const pending = !!desktopModePending;
@@ -1172,15 +1216,13 @@ function updateDesktopModeButtons() {
   const backstageSession = lockedMode === "backstage";
 
   if (elBtnBackstage) {
-    elBtnBackstage.hidden = connected && !backstageSession;
     elBtnBackstage.classList.toggle("session-toggle-active", backstageActive);
-    elBtnBackstage.disabled = !connected || pending || true;
+    elBtnBackstage.disabled = true;
     elBtnBackstage.title = backstageSession ? "Background Desktop session" : "Background Desktop is not authorised for this session";
   }
   if (elBtnConsole) {
-    elBtnConsole.hidden = connected && backstageSession;
     elBtnConsole.classList.toggle("session-toggle-active", !backstageActive);
-    elBtnConsole.disabled = !connected || pending || true;
+    elBtnConsole.disabled = true;
     elBtnConsole.title = backstageSession ? "Console Desktop is not authorised for this session" : "Console Desktop session";
   }
   if (elBtnStartMenu) {
@@ -1191,6 +1233,7 @@ function updateDesktopModeButtons() {
     elBtnStartMenu.title = backstageActive ? "Background apps" : "Start Menu";
     elBtnStartMenu.setAttribute("aria-label", backstageActive ? "Background apps" : "Start Menu");
   }
+  updateSessionActionVisibility();
 }
 
 function setDesktopModePending(mode) {
