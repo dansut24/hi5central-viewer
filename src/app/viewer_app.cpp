@@ -1188,10 +1188,9 @@ textarea:focus{border-color:#93b9ff;box-shadow:0 0 0 3px rgba(37,99,235,.09)}
             }
         }
 
-        std::string BuildBootstrapScript(const DeepLinkLaunch& launch) {
+        std::string BuildBootstrapJs(const DeepLinkLaunch& launch) {
             std::ostringstream js;
             js
-                << "<script>\n"
                 << "(function(){\n"
                 << "  const pending = {\n"
                 << "    session_id: \"" << JsEscape(launch.sessionId) << "\",\n"
@@ -1268,8 +1267,7 @@ textarea:focus{border-color:#93b9ff;box-shadow:0 0 0 3px rgba(37,99,235,.09)}
                 << "  };\n"
                 << "\n"
                 << "  window.__HI5_PENDING_CONNECT__ = pending;\n"
-                << "})();\n"
-                << "</script>\n";
+                << "})();\n";
             return js.str();
         }
 
@@ -1470,28 +1468,26 @@ textarea:focus{border-color:#93b9ff;box-shadow:0 0 0 3px rgba(37,99,235,.09)}
             return 1;
         }
 
-        std::string html = ReadTextFileUtf8(indexPath);
-        if (html.empty()) {
-            LogError("Failed to read index.html");
-            w.set_html(BuildErrorHtml("Failed to read:\n" + indexPath.string()));
-            w.run();
-            return 1;
+        // Inject the native session payload before the document is created, then
+        // navigate to the real local index.html so WebView2 loads renderer.js as a
+        // normal external script. This avoids the fragile NavigateToString/inlined
+        // renderer path that could render the shell without ever executing the
+        // session bootstrap.
+        const std::string bootstrapJs = BuildBootstrapJs(launch);
+        w.init(bootstrapJs);
+
+        std::string indexUrl = std::string("file:///") + indexPath.generic_string();
+        std::string encodedUrl;
+        encodedUrl.reserve(indexUrl.size() + 16);
+        for (const char c : indexUrl) {
+            if (c == ' ') encodedUrl += "%20";
+            else if (c == '#') encodedUrl += "%23";
+            else if (c == '%') encodedUrl += "%25";
+            else encodedUrl.push_back(c);
         }
 
-        std::string rendererJs = ReadTextFileUtf8(rendererPath);
-        if (rendererJs.empty()) {
-            LogError("Failed to read renderer.js");
-            w.set_html(BuildErrorHtml("Failed to read:\n" + rendererPath.string()));
-            w.run();
-            return 1;
-        }
-
-        const std::string bootstrap = BuildBootstrapScript(launch);
-        const std::string rendererInline = BuildInlineScriptTag(rendererJs);
-        html = InjectScriptsIntoHtml(html, bootstrap, rendererInline);
-
-        LogInfo("Loading local viewer shell via set_html with inlined renderer.js");
-        w.set_html(html);
+        LogInfo("Navigating local viewer shell to " + encodedUrl);
+        w.navigate(encodedUrl);
         w.run();
 
         CloseChatWindow(chatBridge);
