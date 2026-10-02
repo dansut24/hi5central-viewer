@@ -3134,18 +3134,53 @@ navigator.connection?.addEventListener?.('change', () => {
    App entry
 ------------------------------------------ */
 
+function viewerNativeLog(message) {
+  try {
+    if (typeof window.hi5ViewerLog === "function") window.hi5ViewerLog(String(message || ""));
+  } catch (_) {}
+}
+
+function consumeNativeLaunch(params, source) {
+  const candidate = params || {};
+  const sessionId = candidate.session_id || candidate.sessionId || "";
+  const deviceId = candidate.device_id || candidate.deviceId || "";
+  const token = candidate.token || candidate.viewer_token || candidate.viewerToken || "";
+  const wssUrl = candidate.wss_url || candidate.wssUrl || candidate.signaling_url || candidate.signalingUrl || "";
+
+  if (!sessionId || !deviceId || !token || !wssUrl) {
+    viewerNativeLog("ignored incomplete launch from " + (source || "native"));
+    return false;
+  }
+  if (currentSession && currentSession.sessionId === sessionId) {
+    viewerNativeLog("ignored duplicate launch for " + sessionId);
+    return true;
+  }
+
+  viewerNativeLog("starting " + sessionId + " from " + (source || "native"));
+  startSession(candidate);
+  return true;
+}
+
 showOverlay(
   "Hi5Central Viewer",
   "Launch this app from Hi5Central to start a remote desktop session."
 );
 updateMonitorButton();
+viewerNativeLog("renderer entry reached");
+
+if (!consumeNativeLaunch(window.__HI5_PENDING_CONNECT__, "bootstrap")) {
+  viewerNativeLog("no complete bootstrap launch payload available");
+}
 
 try {
-  window.hi5?.onConnect((params) => {
-    console.log("[viewer] native launch received");
-    startSession(params);
-  });
+  if (window.hi5 && typeof window.hi5.onConnect === "function") {
+    window.hi5.onConnect((params) => {
+      console.log("[viewer] native launch received");
+      consumeNativeLaunch(params, "onConnect");
+    });
+  }
 } catch (e) {
+  viewerNativeLog("failed to bind native connect hook: " + (e && e.message ? e.message : String(e)));
   console.error("[viewer] failed to bind hi5 connect hook:", e);
 }
 

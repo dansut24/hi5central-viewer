@@ -1395,6 +1395,12 @@ textarea:focus{border-color:#93b9ff;box-shadow:0 0 0 3px rgba(37,99,235,.09)}
             LogWarn("File browser HTML missing or empty: " + fileBrowserPath.string());
         }
 
+        w.bind("hi5ViewerLog", [](std::string req) -> std::string {
+            const std::string message = ParseFirstJsonStringArg(req);
+            if (!message.empty()) LogInfo("[renderer] " + message);
+            return "true";
+            });
+
         w.bind("hi5OpenChatWindow", [chatBridge](std::string) -> std::string {
             LogInfo("[viewer-chat] open requested from renderer");
             OpenChatWindow(chatBridge);
