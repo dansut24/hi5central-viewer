@@ -44,6 +44,10 @@ target_include_directories(hi5tech-viewer PRIVATE
     src
 )
 
+target_compile_definitions(hi5tech-viewer PRIVATE
+    HI5CENTRAL_VIEWER_VERSION="${HI5CENTRAL_VIEWER_VERSION}"
+)
+
 target_link_libraries(hi5tech-viewer PRIVATE
     webview::core
 )

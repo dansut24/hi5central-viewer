@@ -24,7 +24,7 @@ jobs:
             libwebkit2gtk-4.1-dev
 
       - name: Configure
-        run: cmake -G Ninja -B build -S . -DCMAKE_BUILD_TYPE=Release
+        run: cmake -G Ninja -B build -S . -DCMAKE_BUILD_TYPE=Release -DHI5CENTRAL_VIEWER_VERSION=0.2.${GITHUB_RUN_NUMBER}
 
       - name: Build
         run: cmake --build build --parallel 2
@@ -96,7 +96,8 @@ jobs:
           cmake -B build -S . \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0 \
-            -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
+            -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" \
+            -DHI5CENTRAL_VIEWER_VERSION=0.2.${GITHUB_RUN_NUMBER}
 
       - name: Build
         run: cmake --build build --parallel 2
