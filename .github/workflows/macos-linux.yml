@@ -21,7 +21,8 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             ninja-build \
             qt6-base-dev \
-            qt6-webengine-dev
+            qt6-webengine-dev \
+            xvfb
 
       - name: Configure
         run: cmake -G Ninja -B build -S . -DCMAKE_BUILD_TYPE=Release -DHI5CENTRAL_VIEWER_VERSION=0.2.${GITHUB_RUN_NUMBER}
@@ -36,6 +37,10 @@ jobs:
           test -f build/web/renderer.js
           test -f build/web/file_browser.html
           ldd build/Hi5CentralViewer
+          xvfb-run -a env \
+            QTWEBENGINE_DISABLE_SANDBOX=1 \
+            QTWEBENGINE_CHROMIUM_FLAGS=--disable-gpu \
+            build/Hi5CentralViewer --self-test-webrtc
 
       - name: Package Linux DEB
         run: |
