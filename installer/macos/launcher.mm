@@ -7,8 +7,52 @@ extern char** environ;
 
 namespace {
 
+NSString* gViewerBundlePath = nil;
+
+NSString* ViewerBundlePath() {
+    if (gViewerBundlePath) return gViewerBundlePath;
+    return [[NSBundle mainBundle] bundlePath];
+}
+
+void InstallPersistentCopyIfMounted() {
+    NSString* source = [[NSBundle mainBundle] bundlePath];
+    if (![source hasPrefix:@"/Volumes/"]) return;
+
+    NSFileManager* files = [NSFileManager defaultManager];
+    NSString* applications = [NSHomeDirectory() stringByAppendingPathComponent:@"Applications"];
+    NSString* target = [applications stringByAppendingPathComponent:@"Hi5CentralViewer.app"];
+
+    NSError* error = nil;
+    if (![files createDirectoryAtPath:applications
+          withIntermediateDirectories:YES
+                           attributes:nil
+                                error:&error]) {
+        NSLog(@"Hi5Central Viewer could not create user Applications directory: %@", error);
+        return;
+    }
+
+    if ([files fileExistsAtPath:target] && ![files removeItemAtPath:target error:&error]) {
+        NSLog(@"Hi5Central Viewer could not replace existing application: %@", error);
+        return;
+    }
+
+    error = nil;
+    if (![files copyItemAtPath:source toPath:target error:&error]) {
+        NSLog(@"Hi5Central Viewer could not install persistent application copy: %@", error);
+        return;
+    }
+
+    NSURL* targetUrl = [NSURL fileURLWithPath:target isDirectory:YES];
+    const OSStatus registration = LSRegisterURL((__bridge CFURLRef)targetUrl, true);
+    if (registration != noErr) {
+        NSLog(@"Hi5Central Viewer LaunchServices registration returned %d", (int)registration);
+    }
+
+    gViewerBundlePath = [target copy];
+}
+
 bool LaunchViewerCore(NSString* deepLink) {
-    NSString* corePath = [[[NSBundle mainBundle] bundlePath]
+    NSString* corePath = [ViewerBundlePath()
         stringByAppendingPathComponent:@"Contents/MacOS/Hi5CentralViewerCore"];
 
     const char* executable = [corePath fileSystemRepresentation];
@@ -94,6 +138,8 @@ int main(int argc, const char* argv[]) {
     (void)argv;
 
     @autoreleasepool {
+        InstallPersistentCopyIfMounted();
+
         NSApplication* app = [NSApplication sharedApplication];
         Hi5CentralViewerLauncherDelegate* delegate =
             [[Hi5CentralViewerLauncherDelegate alloc] init];

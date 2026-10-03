@@ -86,7 +86,10 @@ if (APPLE)
     add_executable(hi5central-viewer-launcher MACOSX_BUNDLE
         installer/macos/launcher.mm
     )
-    target_link_libraries(hi5central-viewer-launcher PRIVATE "-framework Cocoa")
+    target_link_libraries(hi5central-viewer-launcher PRIVATE
+        "-framework Cocoa"
+        "-framework CoreServices"
+    )
     add_dependencies(hi5central-viewer-launcher hi5tech-viewer)
 
     set_target_properties(hi5tech-viewer PROPERTIES
