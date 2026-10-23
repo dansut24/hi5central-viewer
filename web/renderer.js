@@ -111,6 +111,9 @@ let controlDc = null;
 let mouseMoveDc = null;
 let mouseMoveSeq = 0;
 let devCodecSwitchTimer = null;
+let codecRetryTimer = null;
+let codecRetryAttempts = 0;
+let failedVideoCodecs = [];
 let devCodecRequested = "auto";
 let lastNegotiatedCodecKey = "";
 
@@ -359,6 +362,7 @@ function showStream() {
 }
 
 function markFrameRendered() {
+  if (codecRetryTimer) { clearTimeout(codecRetryTimer); codecRetryTimer = null; }
   const firstRenderedFrame = !hasEverRenderedFrame;
   hasEverRenderedFrame = true;
   lastFrameAtMs = Date.now();
@@ -2630,6 +2634,27 @@ async function updateSelectedCodecFromStats() {
 async function handleOffer(msg) {
   const offerSdp = msg?.sdp;
   if (!offerSdp) return;
+  if (codecRetryTimer) { clearTimeout(codecRetryTimer); codecRetryTimer = null; }
+  const offeredCodec = extractSdpVideoCodecs(offerSdp)
+    .map(entry => String(entry.codec || '').split('/')[0].toLowerCase())
+    .find(codec => ['vp8', 'vp9', 'h264', 'av1'].includes(codec)) || '';
+  const expectedSessionId = currentSession?.sessionId;
+  if (expectedSessionId && offeredCodec && !hasEverRenderedFrame) {
+    codecRetryTimer = setTimeout(() => {
+      codecRetryTimer = null;
+      if (currentSession?.sessionId !== expectedSessionId || hasEverRenderedFrame) return;
+      if (codecRetryAttempts >= 3 || failedVideoCodecs.includes(offeredCodec)) return;
+      failedVideoCodecs.push(offeredCodec);
+      codecRetryAttempts += 1;
+      if (ws?.readyState === WebSocket.OPEN) {
+        viewerNativeLog('[codec] No decoded video; retrying alternate codec ' + offeredCodec);
+        ws.send(JSON.stringify({
+          type: 'codec_retry', session_id: expectedSessionId,
+          excluded_video_codecs: failedVideoCodecs
+        }));
+      }
+    }, 8000);
+  }
 
   if (typeof RTCPeerConnection !== "function") {
     const detail = "RTCPeerConnection is unavailable in this Viewer runtime.";
@@ -3310,6 +3335,9 @@ function startSession(params) {
   console.log("[viewer] starting authorised remote session");
 
   disconnect(undefined, { silent: true });
+  if (codecRetryTimer) { clearTimeout(codecRetryTimer); codecRetryTimer = null; }
+  codecRetryAttempts = 0;
+  failedVideoCodecs = [];
 
   params = params || {};
 
