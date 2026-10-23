@@ -1120,7 +1120,13 @@ function sendDesktopStreamProfile() {
   desktopAdaptiveState = { ...desktopAdaptiveState, ...cfg };
   const resolutionLabel = resolution.preference === 'auto' ? 'Native' : resolution.preference;
   if (elDiagProfile) elDiagProfile.textContent = resolutionLabel + ' · ' + (cfg.bitrate / 1000) + ' Mbps · ' + cfg.fps + ' fps';
-  return sendControlObject({ kind: 'viewer_stream_profile', viewer_client: 'native', ...resolution, target_fps: cfg.fps, target_bitrate_kbps: cfg.bitrate });
+  const qualityTarget = desktopQualityState.current === 'excellent' && desktopAdaptiveState.tier === 0
+    ? 'sharp' : desktopQualityState.current === 'poor' ? 'bandwidth' : 'balanced';
+  return sendControlObject({
+    kind: 'viewer_stream_profile', viewer_client: 'native', ...resolution,
+    target_fps: cfg.fps, target_bitrate_kbps: cfg.bitrate,
+    quality_target: qualityTarget, lossless_supported: false
+  });
 }
 function desktopMedian(values) {
   const nums = values.filter(Number.isFinite).sort((a,b) => a-b);
@@ -3212,6 +3218,15 @@ function scheduleViewerTransportProbe(reason = 'transport-probe', delayMs = 3500
   return true;
 }
 
+function supportedViewerVideoCodecs() {
+  try {
+    const allowed = new Set(['vp8', 'vp9', 'h264', 'av1']);
+    return [...new Set((RTCRtpReceiver.getCapabilities?.('video')?.codecs || [])
+      .map(codec => String(codec?.mimeType || '').toLowerCase().replace(/^video\//, ''))
+      .filter(codec => allowed.has(codec)))];
+  } catch { return []; }
+}
+
 function connectViewerSignaling(reason = 'initial') {
   if (!currentSession || viewerFatalTransportError) return false;
   if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return true;
@@ -3221,7 +3236,8 @@ function connectViewerSignaling(reason = 'initial') {
     `&device_id=${encodeURIComponent(deviceId)}` +
     (token ? `&token=${encodeURIComponent(token)}` : '') +
     (viewerClient ? `&client=${encodeURIComponent(viewerClient)}` : '') +
-    (viewerVersion ? `&viewer_version=${encodeURIComponent(viewerVersion)}` : '');
+    (viewerVersion ? `&viewer_version=${encodeURIComponent(viewerVersion)}` : '') +
+    `&video_codecs=${encodeURIComponent(supportedViewerVideoCodecs().join(','))}`;
   console.log('[viewer] opening signaling socket', { sessionId, deviceId, reason, attempt: viewerReconnectAttempts });
   const socket = new WebSocket(url);
   ws = socket;
