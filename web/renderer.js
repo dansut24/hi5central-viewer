@@ -1129,7 +1129,7 @@ function sendDesktopStreamProfile() {
   return sendControlObject({
     kind: 'viewer_stream_profile', viewer_client: 'native', ...resolution,
     target_fps: cfg.fps, target_bitrate_kbps: cfg.bitrate,
-    quality_target: qualityTarget, lossless_supported: false
+    quality_target: qualityTarget, lossless_supported: supportedViewerVideoCodecs().includes('vp9')
   });
 }
 function desktopMedian(values) {
@@ -1140,6 +1140,7 @@ function desktopMedian(values) {
 }
 
 function observeDesktopNetworkQuality({ rttMs, jitterMs, jitterBufferMs, packetCount, packetsLostDelta }) {
+  const priorQuality = desktopQualityState.current;
   const sample = { rtt: Number.isFinite(rttMs)&&rttMs>0?rttMs:null, jitter:Number.isFinite(jitterMs)?jitterMs:null, buffer:Number.isFinite(jitterBufferMs)?jitterBufferMs:null, packetCount:Math.max(0,Number(packetCount)||0), packetsLost:Math.max(0,Number(packetsLostDelta)||0) };
   desktopQualityState.samples.push(sample);
   if (desktopQualityState.samples.length > 10) desktopQualityState.samples.shift();
