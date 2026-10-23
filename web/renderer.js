@@ -1162,6 +1162,7 @@ function observeDesktopNetworkQuality({ rttMs, jitterMs, jitterBufferMs, packetC
     if(desktopQualityState.count>=needed&&Date.now()-desktopQualityState.changedAt>=4000){desktopQualityState.current=observed;desktopQualityState.changedAt=Date.now();desktopQualityState.candidate=null;desktopQualityState.count=0;}
   }
   const current=desktopQualityState.current;
+  if (priorQuality !== current && pc?.connectionState === 'connected') sendDesktopStreamProfile();
   const qualityLabel=current==='poor'?'Poor':current==='excellent'?'Excellent':'Good';
   const qualityDetail=qualityLabel+' · '+Math.round(rtt||0)+'ms · '+(loss*100).toFixed(1)+'% loss';
   if(elDiagQuality) elDiagQuality.textContent=qualityDetail;
