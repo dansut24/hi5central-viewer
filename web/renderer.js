@@ -364,6 +364,7 @@ function showStream() {
 function markFrameRendered() {
   if (codecRetryTimer) { clearTimeout(codecRetryTimer); codecRetryTimer = null; }
   const firstRenderedFrame = !hasEverRenderedFrame;
+  if (firstRenderedFrame) reportViewerMediaStage('frame', 'decoded_first');
   hasEverRenderedFrame = true;
   lastFrameAtMs = Date.now();
 
@@ -2645,11 +2646,17 @@ async function handleOffer(msg) {
     codecRetryTimer = setTimeout(() => {
       codecRetryTimer = null;
       if (currentSession?.sessionId !== expectedSessionId || hasEverRenderedFrame) return;
+      if (pc?.connectionState !== 'connected') {
+        reportViewerMediaStage('codec', 'waiting_for_ice');
+        setStatus('', 'Negotiating secure video transport…');
+        return;
+      }
       if (codecRetryAttempts >= 3 || failedVideoCodecs.includes(offeredCodec)) return;
       failedVideoCodecs.push(offeredCodec);
       codecRetryAttempts += 1;
       if (ws?.readyState === WebSocket.OPEN) {
-        viewerNativeLog('[codec] No decoded video; retrying alternate codec ' + offeredCodec);
+        reportViewerMediaStage('codec', 'no_decoded_frame');
+        viewerNativeLog('[codec] Connected but no decoded video; retrying alternate codec ' + offeredCodec);
         ws.send(JSON.stringify({
           type: 'codec_retry', session_id: expectedSessionId,
           excluded_video_codecs: failedVideoCodecs
@@ -2755,6 +2762,7 @@ async function handleOffer(msg) {
   };
 
   pc.ontrack = async (ev) => {
+    reportViewerMediaStage('track', ev.track?.kind === 'video' ? 'video_received' : 'other');
     console.log("[rtc] ontrack", { trackKind: ev.track?.kind, streams: ev.streams?.length || 0 });
     setTimeout(updateSelectedCodecFromStats, 500);
     setTimeout(updateSelectedCodecFromStats, 1500);
@@ -2847,10 +2855,12 @@ async function handleOffer(msg) {
 
   pc.onicegatheringstatechange = () => console.log("[rtc] iceGatheringState:", pc.iceGatheringState);
   pc.oniceconnectionstatechange = () => {
+    reportViewerMediaStage('ice', pc.iceConnectionState || 'unknown');
     console.log("[rtc] iceConnectionState:", pc.iceConnectionState);
     if (pc.iceConnectionState === 'failed' && endpointRestartUntil <= Date.now()) scheduleViewerReconnect('ice-failed');
   };
   pc.onconnectionstatechange = () => {
+    reportViewerMediaStage('peer', pc.connectionState || 'unknown');
     console.log("[rtc] connectionState:", pc.connectionState);
 
     if (pc.connectionState === "connected") {
@@ -2875,11 +2885,15 @@ async function handleOffer(msg) {
     }
   };
   pc.onsignalingstatechange = () => console.log("[rtc] signalingState:", pc.signalingState);
+  pc.onicecandidateerror = (ev) => {
+    reportViewerMediaStage('candidate_error', 'code_' + String(ev?.errorCode || 'unknown'));
+  };
 
   pc.onicecandidate = (ev) => {
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
 
     if (ev.candidate) {
+      reportViewerMediaStage('ice', String(ev.candidate.type || 'candidate'));
       ws.send(JSON.stringify({
         type: "ice_candidate",
         session_id: currentSession.sessionId,
@@ -3245,6 +3259,15 @@ function scheduleViewerTransportProbe(reason = 'transport-probe', delayMs = 3500
   return true;
 }
 
+function reportViewerMediaStage(stage, state) {
+  if (ws?.readyState !== WebSocket.OPEN || !currentSession?.sessionId) return;
+  if (!/^[a-z0-9_-]{1,36}$/.test(String(state || ''))) return;
+  try { ws.send(JSON.stringify({
+    type: 'viewer_media_diagnostic', session_id: currentSession.sessionId,
+    stage, state
+  })); } catch {}
+}
+
 function supportedViewerVideoCodecs() {
   try {
     const allowed = new Set(['vp8', 'vp9', 'h264', 'av1']);
@@ -3277,8 +3300,9 @@ function connectViewerSignaling(reason = 'initial') {
         if (!currentSession || ws !== socket || endpointRestartUntil > Date.now()) return;
         if (viewerReconnectAttempts !== attempt || pc?.connectionState === 'connected') return;
         if (viewerReconnectDeadline && Date.now() >= viewerReconnectDeadline) { disconnect('Connection lost'); return; }
+        reportViewerMediaStage('ice', 'negotiation_timeout');
         scheduleViewerReconnect('media-negotiation-timeout');
-      }, 8000);
+      }, 20000);
     }
   };
   socket.onmessage = onSignalMessage;
