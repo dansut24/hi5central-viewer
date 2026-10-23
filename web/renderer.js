@@ -111,6 +111,9 @@ let controlDc = null;
 let mouseMoveDc = null;
 let mouseMoveSeq = 0;
 let devCodecSwitchTimer = null;
+let codecRetryTimer = null;
+let codecRetryAttempts = 0;
+let failedVideoCodecs = [];
 let devCodecRequested = "auto";
 let lastNegotiatedCodecKey = "";
 
@@ -359,7 +362,9 @@ function showStream() {
 }
 
 function markFrameRendered() {
+  if (codecRetryTimer) { clearTimeout(codecRetryTimer); codecRetryTimer = null; }
   const firstRenderedFrame = !hasEverRenderedFrame;
+  if (firstRenderedFrame) reportViewerMediaStage('frame', 'decoded_first');
   hasEverRenderedFrame = true;
   lastFrameAtMs = Date.now();
 
@@ -1120,7 +1125,13 @@ function sendDesktopStreamProfile() {
   desktopAdaptiveState = { ...desktopAdaptiveState, ...cfg };
   const resolutionLabel = resolution.preference === 'auto' ? 'Native' : resolution.preference;
   if (elDiagProfile) elDiagProfile.textContent = resolutionLabel + ' · ' + (cfg.bitrate / 1000) + ' Mbps · ' + cfg.fps + ' fps';
-  return sendControlObject({ kind: 'viewer_stream_profile', viewer_client: 'native', ...resolution, target_fps: cfg.fps, target_bitrate_kbps: cfg.bitrate });
+  const qualityTarget = desktopQualityState.current === 'excellent' && desktopAdaptiveState.tier === 0
+    ? 'sharp' : desktopQualityState.current === 'poor' ? 'bandwidth' : 'balanced';
+  return sendControlObject({
+    kind: 'viewer_stream_profile', viewer_client: 'native', ...resolution,
+    target_fps: cfg.fps, target_bitrate_kbps: cfg.bitrate,
+    quality_target: qualityTarget, lossless_supported: supportedViewerVideoCodecs().includes('vp9')
+  });
 }
 function desktopMedian(values) {
   const nums = values.filter(Number.isFinite).sort((a,b) => a-b);
@@ -1130,6 +1141,7 @@ function desktopMedian(values) {
 }
 
 function observeDesktopNetworkQuality({ rttMs, jitterMs, jitterBufferMs, packetCount, packetsLostDelta }) {
+  const priorQuality = desktopQualityState.current;
   const sample = { rtt: Number.isFinite(rttMs)&&rttMs>0?rttMs:null, jitter:Number.isFinite(jitterMs)?jitterMs:null, buffer:Number.isFinite(jitterBufferMs)?jitterBufferMs:null, packetCount:Math.max(0,Number(packetCount)||0), packetsLost:Math.max(0,Number(packetsLostDelta)||0) };
   desktopQualityState.samples.push(sample);
   if (desktopQualityState.samples.length > 10) desktopQualityState.samples.shift();
@@ -1151,6 +1163,7 @@ function observeDesktopNetworkQuality({ rttMs, jitterMs, jitterBufferMs, packetC
     if(desktopQualityState.count>=needed&&Date.now()-desktopQualityState.changedAt>=4000){desktopQualityState.current=observed;desktopQualityState.changedAt=Date.now();desktopQualityState.candidate=null;desktopQualityState.count=0;}
   }
   const current=desktopQualityState.current;
+  if (priorQuality !== current && pc?.connectionState === 'connected') sendDesktopStreamProfile();
   const qualityLabel=current==='poor'?'Poor':current==='excellent'?'Excellent':'Good';
   const qualityDetail=qualityLabel+' · '+Math.round(rtt||0)+'ms · '+(loss*100).toFixed(1)+'% loss';
   if(elDiagQuality) elDiagQuality.textContent=qualityDetail;
@@ -2624,6 +2637,33 @@ async function updateSelectedCodecFromStats() {
 async function handleOffer(msg) {
   const offerSdp = msg?.sdp;
   if (!offerSdp) return;
+  if (codecRetryTimer) { clearTimeout(codecRetryTimer); codecRetryTimer = null; }
+  const offeredCodec = extractSdpVideoCodecs(offerSdp)
+    .map(entry => String(entry.codec || '').split('/')[0].toLowerCase())
+    .find(codec => ['vp8', 'vp9', 'h264', 'av1'].includes(codec)) || '';
+  const expectedSessionId = currentSession?.sessionId;
+  if (expectedSessionId && offeredCodec && !hasEverRenderedFrame) {
+    codecRetryTimer = setTimeout(() => {
+      codecRetryTimer = null;
+      if (currentSession?.sessionId !== expectedSessionId || hasEverRenderedFrame) return;
+      if (pc?.connectionState !== 'connected') {
+        reportViewerMediaStage('codec', 'waiting_for_ice');
+        setStatus('', 'Negotiating secure video transport…');
+        return;
+      }
+      if (codecRetryAttempts >= 3 || failedVideoCodecs.includes(offeredCodec)) return;
+      failedVideoCodecs.push(offeredCodec);
+      codecRetryAttempts += 1;
+      if (ws?.readyState === WebSocket.OPEN) {
+        reportViewerMediaStage('codec', 'no_decoded_frame');
+        viewerNativeLog('[codec] Connected but no decoded video; retrying alternate codec ' + offeredCodec);
+        ws.send(JSON.stringify({
+          type: 'codec_retry', session_id: expectedSessionId,
+          excluded_video_codecs: failedVideoCodecs
+        }));
+      }
+    }, 8000);
+  }
 
   if (typeof RTCPeerConnection !== "function") {
     const detail = "RTCPeerConnection is unavailable in this Viewer runtime.";
@@ -2722,6 +2762,7 @@ async function handleOffer(msg) {
   };
 
   pc.ontrack = async (ev) => {
+    reportViewerMediaStage('track', ev.track?.kind === 'video' ? 'video_received' : 'other');
     console.log("[rtc] ontrack", { trackKind: ev.track?.kind, streams: ev.streams?.length || 0 });
     setTimeout(updateSelectedCodecFromStats, 500);
     setTimeout(updateSelectedCodecFromStats, 1500);
@@ -2814,10 +2855,12 @@ async function handleOffer(msg) {
 
   pc.onicegatheringstatechange = () => console.log("[rtc] iceGatheringState:", pc.iceGatheringState);
   pc.oniceconnectionstatechange = () => {
+    reportViewerMediaStage('ice', pc.iceConnectionState || 'unknown');
     console.log("[rtc] iceConnectionState:", pc.iceConnectionState);
     if (pc.iceConnectionState === 'failed' && endpointRestartUntil <= Date.now()) scheduleViewerReconnect('ice-failed');
   };
   pc.onconnectionstatechange = () => {
+    reportViewerMediaStage('peer', pc.connectionState || 'unknown');
     console.log("[rtc] connectionState:", pc.connectionState);
 
     if (pc.connectionState === "connected") {
@@ -2842,11 +2885,15 @@ async function handleOffer(msg) {
     }
   };
   pc.onsignalingstatechange = () => console.log("[rtc] signalingState:", pc.signalingState);
+  pc.onicecandidateerror = (ev) => {
+    reportViewerMediaStage('candidate_error', 'code_' + String(ev?.errorCode || 'unknown'));
+  };
 
   pc.onicecandidate = (ev) => {
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
 
     if (ev.candidate) {
+      reportViewerMediaStage('ice', String(ev.candidate.type || 'candidate'));
       ws.send(JSON.stringify({
         type: "ice_candidate",
         session_id: currentSession.sessionId,
@@ -3212,6 +3259,24 @@ function scheduleViewerTransportProbe(reason = 'transport-probe', delayMs = 3500
   return true;
 }
 
+function reportViewerMediaStage(stage, state) {
+  if (ws?.readyState !== WebSocket.OPEN || !currentSession?.sessionId) return;
+  if (!/^[a-z0-9_-]{1,36}$/.test(String(state || ''))) return;
+  try { ws.send(JSON.stringify({
+    type: 'viewer_media_diagnostic', session_id: currentSession.sessionId,
+    stage, state
+  })); } catch {}
+}
+
+function supportedViewerVideoCodecs() {
+  try {
+    const allowed = new Set(['vp8', 'vp9', 'h264', 'av1']);
+    return [...new Set((RTCRtpReceiver.getCapabilities?.('video')?.codecs || [])
+      .map(codec => String(codec?.mimeType || '').toLowerCase().replace(/^video\//, ''))
+      .filter(codec => allowed.has(codec)))];
+  } catch { return []; }
+}
+
 function connectViewerSignaling(reason = 'initial') {
   if (!currentSession || viewerFatalTransportError) return false;
   if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return true;
@@ -3221,7 +3286,8 @@ function connectViewerSignaling(reason = 'initial') {
     `&device_id=${encodeURIComponent(deviceId)}` +
     (token ? `&token=${encodeURIComponent(token)}` : '') +
     (viewerClient ? `&client=${encodeURIComponent(viewerClient)}` : '') +
-    (viewerVersion ? `&viewer_version=${encodeURIComponent(viewerVersion)}` : '');
+    (viewerVersion ? `&viewer_version=${encodeURIComponent(viewerVersion)}` : '') +
+    `&video_codecs=${encodeURIComponent(supportedViewerVideoCodecs().join(','))}`;
   console.log('[viewer] opening signaling socket', { sessionId, deviceId, reason, attempt: viewerReconnectAttempts });
   const socket = new WebSocket(url);
   ws = socket;
@@ -3234,8 +3300,9 @@ function connectViewerSignaling(reason = 'initial') {
         if (!currentSession || ws !== socket || endpointRestartUntil > Date.now()) return;
         if (viewerReconnectAttempts !== attempt || pc?.connectionState === 'connected') return;
         if (viewerReconnectDeadline && Date.now() >= viewerReconnectDeadline) { disconnect('Connection lost'); return; }
+        reportViewerMediaStage('ice', 'negotiation_timeout');
         scheduleViewerReconnect('media-negotiation-timeout');
-      }, 8000);
+      }, 20000);
     }
   };
   socket.onmessage = onSignalMessage;
@@ -3294,6 +3361,9 @@ function startSession(params) {
   console.log("[viewer] starting authorised remote session");
 
   disconnect(undefined, { silent: true });
+  if (codecRetryTimer) { clearTimeout(codecRetryTimer); codecRetryTimer = null; }
+  codecRetryAttempts = 0;
+  failedVideoCodecs = [];
 
   params = params || {};
 
