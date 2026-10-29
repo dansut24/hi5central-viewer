@@ -2394,7 +2394,8 @@ function logExperimentalH264ReceiveSupport(offerSdp) {
   const h264Offered = extractSdpVideoCodecs(offerSdp)
     .filter(item => String(item.codec).toLowerCase().startsWith("h264/"));
   if (!h264Offered.length) return;
-  const supported = RTCRtpReceiver.getCapabilities?.("video")?.codecs || [];
+  const supported = (typeof RTCRtpReceiver !== "undefined"
+    ? RTCRtpReceiver.getCapabilities?.("video")?.codecs : []) || [];
   const h264 = supported.filter(item =>
     String(item.mimeType || "").toLowerCase() === "video/h264");
   const report = {
