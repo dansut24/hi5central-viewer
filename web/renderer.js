@@ -3304,7 +3304,9 @@ function scheduleViewerTransportProbe(reason = 'transport-probe', delayMs = 3500
 function universalViewerCodecQuery() {
   if (typeof RTCRtpReceiver === "undefined" ||
       typeof RTCRtpReceiver.getCapabilities !== "function") return "";
-  const caps = RTCRtpReceiver.getCapabilities("video")?.codecs || [];
+  let caps = [];
+  try { caps = RTCRtpReceiver.getCapabilities("video")?.codecs || []; }
+  catch { return ""; } // never prevent legacy Viewer connection
   const codecs = ["vp8", "vp9", "h264"].filter(codec =>
     caps.some(c => String(c.mimeType || "").toLowerCase() === "video/" + codec));
   if (!codecs.length) return "";
