@@ -3262,6 +3262,29 @@ function scheduleViewerTransportProbe(reason = 'transport-probe', delayMs = 3500
   return true;
 }
 
+// Advertise only browser-reported receive codecs, never GPU model or a
+// guessed decoder. This is per-connection metadata, not a persistent device
+// qualification. Legacy Viewers omit it and retain the old VP8/VP9 policy.
+function universalViewerCodecQuery() {
+  if (typeof RTCRtpReceiver === "undefined" ||
+      typeof RTCRtpReceiver.getCapabilities !== "function") return "";
+  const caps = RTCRtpReceiver.getCapabilities("video")?.codecs || [];
+  const codecs = ["vp8", "vp9", "h264"].filter(codec =>
+    caps.some(c => String(c.mimeType || "").toLowerCase() === "video/" + codec));
+  if (!codecs.length) return "";
+  // Never declare 1080p H264 support based on browser brand alone.
+  // A matching receiver capability with level >= 4.0 is required.
+  const level40 = caps.some(c => {
+    if (String(c.mimeType || "").toLowerCase() !== "video/h264") return false;
+    const fmtp = String(c.sdpFmtpLine || "");
+    const m = fmtp.match(/(?:^|;)\\s*profile-level-id=([0-9a-f]{6})(?:;|$)/i);
+    return m && parseInt(m[1].slice(4), 16) >= 0x28;
+  });
+  return "&codec_caps_v1=1&video_codecs=" +
+    encodeURIComponent(codecs.join(",")) +
+    "&h264_level4=" + (level40 ? "1" : "0");
+}
+
 function connectViewerSignaling(reason = 'initial') {
   if (!currentSession || viewerFatalTransportError) return false;
   if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return true;
@@ -3271,7 +3294,8 @@ function connectViewerSignaling(reason = 'initial') {
     `&device_id=${encodeURIComponent(deviceId)}` +
     (token ? `&token=${encodeURIComponent(token)}` : '') +
     (viewerClient ? `&client=${encodeURIComponent(viewerClient)}` : '') +
-    (viewerVersion ? `&viewer_version=${encodeURIComponent(viewerVersion)}` : '');
+    (viewerVersion ? `&viewer_version=${encodeURIComponent(viewerVersion)}` : '') +
+    universalViewerCodecQuery();
   console.log('[viewer] opening signaling socket', { sessionId, deviceId, reason, attempt: viewerReconnectAttempts });
   const socket = new WebSocket(url);
   ws = socket;
