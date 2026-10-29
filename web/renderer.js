@@ -136,6 +136,7 @@ let viewerReconnectCooldownUntil = 0;
 let viewerFatalTransportError = false;
 
 let statsTimer = null;
+let lastCodecProofReportAt = 0;
 let transitionWatchdogTimer = null;
 let lastStats = { tsMs: 0, bytes: 0, frames: 0, packetsLost: 0, packetsReceived: 0, jitterDelay: 0, jitterEmitted: 0 };
 const DESKTOP_ADAPTIVE_TIERS = [
@@ -1852,6 +1853,41 @@ async function pollStatsOnce() {
     lastStats.jitterEmitted = jitterEmitted;
   }
 
+  // Report actual WebRTC decoding only after a sustained stream, never
+  // merely because a codec was advertised or a video track connected.
+  // The Agent must independently correlate these counters with its own
+  // encoder timings before persisting a hardware qualification.
+  if (inbound && currentSession && ws?.readyState === WebSocket.OPEN &&
+      pc?.connectionState === "connected" && nowMs - lastCodecProofReportAt > 6000) {
+    const activeCodec = inbound.codecId ? stats.get(inbound.codecId) : null;
+    const mime = String(activeCodec?.mimeType || "").toLowerCase();
+    const decoded = Number(inbound.framesDecoded || 0);
+    const keyframes = Number(inbound.keyFramesDecoded || 0);
+    const received = Number(inbound.packetsReceived || 0);
+    const dropped = Number(inbound.framesDropped || 0);
+    const supported = ["video/h264", "video/vp9", "video/vp8"];
+    if (supported.includes(mime) && decoded >= 30 && keyframes >= 1 &&
+        received >= decoded && dropped <= decoded / 5 &&
+        Number.isFinite(decoded) && Number.isFinite(dropped)) {
+      const width = Number(inbound.frameWidth || elVideo?.videoWidth || 0);
+      const height = Number(inbound.frameHeight || elVideo?.videoHeight || 0);
+      if (width >= 320 && width <= 7680 && height >= 240 && height <= 4320) {
+        lastCodecProofReportAt = nowMs;
+        ws.send(JSON.stringify({
+          type: "viewer_codec_observation",
+          session_id: currentSession.sessionId,
+          codec: mime.slice(6),
+          frames_decoded: Math.floor(decoded),
+          keyframes_decoded: Math.floor(keyframes),
+          frames_dropped: Math.floor(dropped),
+          packets_received: Math.floor(received),
+          width: Math.floor(width),
+          height: Math.floor(height)
+        }));
+      }
+    }
+  }
+
   const rttMs = selectedPair && isFinite(selectedPair.currentRoundTripTime)
     ? Math.round(selectedPair.currentRoundTripTime * 1000)
     : null;
@@ -3390,6 +3426,7 @@ function startSession(params) {
     return;
   }
 
+  lastCodecProofReportAt = 0;
   desktopAdaptiveState = { tier: 0, bad: 0, good: 0, lastChangeAt: Date.now(), ...DESKTOP_ADAPTIVE_TIERS[0] };
   desktopQualityState = { current: 'good', candidate: null, count: 0, changedAt: Date.now(), samples: [] };
   if (elDiagQuality) elDiagQuality.textContent = 'Measuring';
