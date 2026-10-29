@@ -136,6 +136,7 @@ let viewerReconnectCooldownUntil = 0;
 let viewerFatalTransportError = false;
 
 let statsTimer = null;
+let lastCodecProofReportAt = 0;
 let transitionWatchdogTimer = null;
 let lastStats = { tsMs: 0, bytes: 0, frames: 0, packetsLost: 0, packetsReceived: 0, jitterDelay: 0, jitterEmitted: 0 };
 const DESKTOP_ADAPTIVE_TIERS = [
@@ -1852,6 +1853,41 @@ async function pollStatsOnce() {
     lastStats.jitterEmitted = jitterEmitted;
   }
 
+  // Report actual WebRTC decoding only after a sustained stream, never
+  // merely because a codec was advertised or a video track connected.
+  // The Agent must independently correlate these counters with its own
+  // encoder timings before persisting a hardware qualification.
+  if (inbound && currentSession && ws?.readyState === WebSocket.OPEN &&
+      pc?.connectionState === "connected" && nowMs - lastCodecProofReportAt > 6000) {
+    const activeCodec = inbound.codecId ? stats.get(inbound.codecId) : null;
+    const mime = String(activeCodec?.mimeType || "").toLowerCase();
+    const decoded = Number(inbound.framesDecoded || 0);
+    const keyframes = Number(inbound.keyFramesDecoded || 0);
+    const received = Number(inbound.packetsReceived || 0);
+    const dropped = Number(inbound.framesDropped || 0);
+    const supported = ["video/h264", "video/vp9", "video/vp8"];
+    if (supported.includes(mime) && decoded >= 30 && keyframes >= 1 &&
+        received >= decoded && dropped <= decoded / 5 &&
+        Number.isFinite(decoded) && Number.isFinite(dropped)) {
+      const width = Number(inbound.frameWidth || elVideo?.videoWidth || 0);
+      const height = Number(inbound.frameHeight || elVideo?.videoHeight || 0);
+      if (width >= 320 && width <= 7680 && height >= 240 && height <= 4320) {
+        lastCodecProofReportAt = nowMs;
+        ws.send(JSON.stringify({
+          type: "viewer_codec_observation",
+          session_id: currentSession.sessionId,
+          codec: mime.slice(6),
+          frames_decoded: Math.floor(decoded),
+          keyframes_decoded: Math.floor(keyframes),
+          frames_dropped: Math.floor(dropped),
+          packets_received: Math.floor(received),
+          width: Math.floor(width),
+          height: Math.floor(height)
+        }));
+      }
+    }
+  }
+
   const rttMs = selectedPair && isFinite(selectedPair.currentRoundTripTime)
     ? Math.round(selectedPair.currentRoundTripTime * 1000)
     : null;
@@ -2388,6 +2424,26 @@ function logSdpCodecSummary(label, sdp) {
   return codecs;
 }
 
+// The Agent chooses the encoder; the Viewer only checks whether its
+// WebRTC receiver can negotiate and actually decode the offered H.264.
+function logExperimentalH264ReceiveSupport(offerSdp) {
+  const h264Offered = extractSdpVideoCodecs(offerSdp)
+    .filter(item => String(item.codec).toLowerCase().startsWith("h264/"));
+  if (!h264Offered.length) return;
+  const supported = (typeof RTCRtpReceiver !== "undefined"
+    ? RTCRtpReceiver.getCapabilities?.("video")?.codecs : []) || [];
+  const h264 = supported.filter(item =>
+    String(item.mimeType || "").toLowerCase() === "video/h264");
+  const report = {
+    offered: h264Offered,
+    browserSupportsH264: h264.length > 0,
+    browserFmtp: h264.map(item => item.sdpFmtpLine || "")
+  };
+  console.info("[codec] H264 experimental receive capability", report);
+  viewerNativeLog("[codec] H264 offered, browser H264=" +
+    report.browserSupportsH264);
+}
+
 function sdpFmtpParam(fmtp, name) {
   const wanted = String(name || "").toLowerCase();
   for (const rawPart of String(fmtp || "").split(";")) {
@@ -2611,6 +2667,29 @@ async function updateSelectedCodecFromStats() {
       const label = `${mime.replace(/^video\//i, "").toUpperCase()} pt=${codec.payloadType ?? "?"}`;
       setViewerCodecLabel(label);
       console.log("[codec] selected inbound codec", { mimeType: codec.mimeType, payloadType: codec.payloadType, clockRate: codec.clockRate, sdpFmtpLine: codec.sdpFmtpLine });
+      if (String(mime).toLowerCase() === "video/h264") {
+        const report = {
+          packets: inbound.packetsReceived ?? null,
+          framesReceived: inbound.framesReceived ?? null,
+          framesDecoded: inbound.framesDecoded ?? null,
+          keyFramesDecoded: inbound.keyFramesDecoded ?? null,
+          framesDropped: inbound.framesDropped ?? null,
+          pliCount: inbound.pliCount ?? null,
+          freezeCount: inbound.freezeCount ?? null,
+          fmtp: codec.sdpFmtpLine || ""
+        };
+        console.info("[codec] H264 browser decode verification", report);
+        viewerNativeLog("[codec] H264 receive packets=" + String(report.packets ?? "?") +
+          " decoded=" + String(report.framesDecoded ?? "?") +
+          " keyframes=" + String(report.keyFramesDecoded ?? "?"));
+        if (elCodecDevBadge) {
+          elCodecDevBadge.title = "H.264 receive · decoded=" +
+            String(report.framesDecoded ?? "?") + " keyframes=" +
+            String(report.keyFramesDecoded ?? "?") + " dropped=" +
+            String(report.framesDropped ?? "?") +
+            " · hardware encoding must be verified on the Agent";
+        }
+      }
     }
   } catch (e) {
     console.warn("[codec] selected codec stats failed", e?.message || e);
@@ -2650,6 +2729,7 @@ async function handleOffer(msg) {
   if (pc) teardownPeerForReconnect();
   endpointRestartUntil = 0;
   logSdpCodecSummary("remote offer", offerSdp);
+  logExperimentalH264ReceiveSupport(offerSdp);
 
   setStatus("", "Negotiating…");
 
@@ -2681,7 +2761,13 @@ async function handleOffer(msg) {
       // Stable Auto prefers VP9 on capable endpoints. Keep VP8 immediately behind
       // it as the universal compatibility fallback; forced/experimental codecs
       // remain available without overriding the Agent's stable offer policy.
-      const primaryOrder = ["video/vp9", "video/vp8", "video/h264", "video/av1", "video/h265", "video/hevc"];
+      const offered = extractSdpVideoCodecs(offerSdp)
+        .map(item => String(item.codec).split("/")[0].toLowerCase());
+      const h264OnlyTrial = offered.includes("h264") &&
+        !offered.includes("vp8") && !offered.includes("vp9");
+      const primaryOrder = h264OnlyTrial
+        ? ["video/h264", "video/vp9", "video/vp8", "video/av1", "video/h265", "video/hevc"]
+        : ["video/vp9", "video/vp8", "video/h264", "video/av1", "video/h265", "video/hevc"];
       const primary = [];
       for (const wanted of primaryOrder) {
         primary.push(...codecs.filter(c => String(c.mimeType).toLowerCase() === wanted));
@@ -3212,6 +3298,31 @@ function scheduleViewerTransportProbe(reason = 'transport-probe', delayMs = 3500
   return true;
 }
 
+// Advertise only browser-reported receive codecs, never GPU model or a
+// guessed decoder. This is per-connection metadata, not a persistent device
+// qualification. Legacy Viewers omit it and retain the old VP8/VP9 policy.
+function universalViewerCodecQuery() {
+  if (typeof RTCRtpReceiver === "undefined" ||
+      typeof RTCRtpReceiver.getCapabilities !== "function") return "";
+  let caps = [];
+  try { caps = RTCRtpReceiver.getCapabilities("video")?.codecs || []; }
+  catch { return ""; } // never prevent legacy Viewer connection
+  const codecs = ["vp8", "vp9", "h264"].filter(codec =>
+    caps.some(c => String(c.mimeType || "").toLowerCase() === "video/" + codec));
+  if (!codecs.length) return "";
+  // Never declare 1080p H264 support based on browser brand alone.
+  // A matching receiver capability with level >= 4.0 is required.
+  const level40 = caps.some(c => {
+    if (String(c.mimeType || "").toLowerCase() !== "video/h264") return false;
+    const fmtp = String(c.sdpFmtpLine || "");
+    const m = fmtp.match(/(?:^|;)\s*profile-level-id=([0-9a-f]{6})(?:;|$)/i);
+    return m && parseInt(m[1].slice(4), 16) >= 0x28;
+  });
+  return "&codec_caps_v1=1&video_codecs=" +
+    encodeURIComponent(codecs.join(",")) +
+    "&h264_level4=" + (level40 ? "1" : "0");
+}
+
 function connectViewerSignaling(reason = 'initial') {
   if (!currentSession || viewerFatalTransportError) return false;
   if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return true;
@@ -3221,7 +3332,8 @@ function connectViewerSignaling(reason = 'initial') {
     `&device_id=${encodeURIComponent(deviceId)}` +
     (token ? `&token=${encodeURIComponent(token)}` : '') +
     (viewerClient ? `&client=${encodeURIComponent(viewerClient)}` : '') +
-    (viewerVersion ? `&viewer_version=${encodeURIComponent(viewerVersion)}` : '');
+    (viewerVersion ? `&viewer_version=${encodeURIComponent(viewerVersion)}` : '') +
+    universalViewerCodecQuery();
   console.log('[viewer] opening signaling socket', { sessionId, deviceId, reason, attempt: viewerReconnectAttempts });
   const socket = new WebSocket(url);
   ws = socket;
@@ -3316,6 +3428,7 @@ function startSession(params) {
     return;
   }
 
+  lastCodecProofReportAt = 0;
   desktopAdaptiveState = { tier: 0, bad: 0, good: 0, lastChangeAt: Date.now(), ...DESKTOP_ADAPTIVE_TIERS[0] };
   desktopQualityState = { current: 'good', candidate: null, count: 0, changedAt: Date.now(), samples: [] };
   if (elDiagQuality) elDiagQuality.textContent = 'Measuring';
