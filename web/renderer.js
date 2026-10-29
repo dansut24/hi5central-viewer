@@ -3277,7 +3277,7 @@ function universalViewerCodecQuery() {
   const level40 = caps.some(c => {
     if (String(c.mimeType || "").toLowerCase() !== "video/h264") return false;
     const fmtp = String(c.sdpFmtpLine || "");
-    const m = fmtp.match(/(?:^|;)\\s*profile-level-id=([0-9a-f]{6})(?:;|$)/i);
+    const m = fmtp.match(/(?:^|;)\s*profile-level-id=([0-9a-f]{6})(?:;|$)/i);
     return m && parseInt(m[1].slice(4), 16) >= 0x28;
   });
   return "&codec_caps_v1=1&video_codecs=" +
