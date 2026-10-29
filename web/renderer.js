@@ -2388,6 +2388,25 @@ function logSdpCodecSummary(label, sdp) {
   return codecs;
 }
 
+// The Agent chooses the encoder; the Viewer only checks whether its
+// WebRTC receiver can negotiate and actually decode the offered H.264.
+function logExperimentalH264ReceiveSupport(offerSdp) {
+  const h264Offered = extractSdpVideoCodecs(offerSdp)
+    .filter(item => String(item.codec).toLowerCase().startsWith("h264/"));
+  if (!h264Offered.length) return;
+  const supported = RTCRtpReceiver.getCapabilities?.("video")?.codecs || [];
+  const h264 = supported.filter(item =>
+    String(item.mimeType || "").toLowerCase() === "video/h264");
+  const report = {
+    offered: h264Offered,
+    browserSupportsH264: h264.length > 0,
+    browserFmtp: h264.map(item => item.sdpFmtpLine || "")
+  };
+  console.info("[codec] H264 experimental receive capability", report);
+  viewerNativeLog("[codec] H264 offered, browser H264=" +
+    report.browserSupportsH264);
+}
+
 function sdpFmtpParam(fmtp, name) {
   const wanted = String(name || "").toLowerCase();
   for (const rawPart of String(fmtp || "").split(";")) {
@@ -2611,6 +2630,29 @@ async function updateSelectedCodecFromStats() {
       const label = `${mime.replace(/^video\//i, "").toUpperCase()} pt=${codec.payloadType ?? "?"}`;
       setViewerCodecLabel(label);
       console.log("[codec] selected inbound codec", { mimeType: codec.mimeType, payloadType: codec.payloadType, clockRate: codec.clockRate, sdpFmtpLine: codec.sdpFmtpLine });
+      if (String(mime).toLowerCase() === "video/h264") {
+        const report = {
+          packets: inbound.packetsReceived ?? null,
+          framesReceived: inbound.framesReceived ?? null,
+          framesDecoded: inbound.framesDecoded ?? null,
+          keyFramesDecoded: inbound.keyFramesDecoded ?? null,
+          framesDropped: inbound.framesDropped ?? null,
+          pliCount: inbound.pliCount ?? null,
+          freezeCount: inbound.freezeCount ?? null,
+          fmtp: codec.sdpFmtpLine || ""
+        };
+        console.info("[codec] H264 browser decode verification", report);
+        viewerNativeLog("[codec] H264 receive packets=" + String(report.packets ?? "?") +
+          " decoded=" + String(report.framesDecoded ?? "?") +
+          " keyframes=" + String(report.keyFramesDecoded ?? "?"));
+        if (elCodecDevBadge) {
+          elCodecDevBadge.title = "H.264 receive · decoded=" +
+            String(report.framesDecoded ?? "?") + " keyframes=" +
+            String(report.keyFramesDecoded ?? "?") + " dropped=" +
+            String(report.framesDropped ?? "?") +
+            " · hardware encoding must be verified on the Agent";
+        }
+      }
     }
   } catch (e) {
     console.warn("[codec] selected codec stats failed", e?.message || e);
@@ -2650,6 +2692,7 @@ async function handleOffer(msg) {
   if (pc) teardownPeerForReconnect();
   endpointRestartUntil = 0;
   logSdpCodecSummary("remote offer", offerSdp);
+  logExperimentalH264ReceiveSupport(offerSdp);
 
   setStatus("", "Negotiating…");
 
@@ -2681,7 +2724,13 @@ async function handleOffer(msg) {
       // Stable Auto prefers VP9 on capable endpoints. Keep VP8 immediately behind
       // it as the universal compatibility fallback; forced/experimental codecs
       // remain available without overriding the Agent's stable offer policy.
-      const primaryOrder = ["video/vp9", "video/vp8", "video/h264", "video/av1", "video/h265", "video/hevc"];
+      const offered = extractSdpVideoCodecs(offerSdp)
+        .map(item => String(item.codec).split("/")[0].toLowerCase());
+      const h264OnlyTrial = offered.includes("h264") &&
+        !offered.includes("vp8") && !offered.includes("vp9");
+      const primaryOrder = h264OnlyTrial
+        ? ["video/h264", "video/vp9", "video/vp8", "video/av1", "video/h265", "video/hevc"]
+        : ["video/vp9", "video/vp8", "video/h264", "video/av1", "video/h265", "video/hevc"];
       const primary = [];
       for (const wanted of primaryOrder) {
         primary.push(...codecs.filter(c => String(c.mimeType).toLowerCase() === wanted));
